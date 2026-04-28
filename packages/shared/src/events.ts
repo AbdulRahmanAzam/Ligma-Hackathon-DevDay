@@ -41,6 +41,8 @@ export interface NodeKind {
 
 export type NodeKindValue = "sticky" | "shape" | "text" | "drawing";
 
+export type ShapeVariant = "rect" | "ellipse" | "arrow";
+
 export interface NodeCreatedPayload {
   kind: NodeKindValue;
   x: number;
@@ -50,6 +52,9 @@ export interface NodeCreatedPayload {
   fill?: string;
   stroke?: string;
   text?: string;
+  shape?: ShapeVariant;
+  /** For arrows: end point relative to (x, y). */
+  end?: { x: number; y: number };
 }
 
 export interface NodeMovedPayload {

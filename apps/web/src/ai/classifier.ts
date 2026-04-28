@@ -12,7 +12,10 @@ async function getPipeline(): Promise<Pipeline> {
   if (!pipelinePromise) {
     pipelinePromise = import("@huggingface/transformers")
       .then((m) =>
-        m.pipeline("zero-shot-classification", "Xenova/mobilebert-uncased-mnli", {
+        // Xenova/nli-deberta-v3-base — meaningfully better than MobileBERT on
+        // short text (~280 MB vs ~95 MB; first-load is slower but cached after).
+        // The classifier API is identical, only the model id changes.
+        m.pipeline("zero-shot-classification", "Xenova/nli-deberta-v3-base", {
           progress_callback: (p: { status: string; progress?: number; file?: string }) => {
             if (p.status === "progress" && p.progress !== undefined) {
               window.dispatchEvent(

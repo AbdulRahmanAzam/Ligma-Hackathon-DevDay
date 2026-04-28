@@ -4,9 +4,10 @@ import { Login } from "./auth/Login";
 import { CanvasStore } from "./canvas/store";
 import { Canvas } from "./canvas/Canvas";
 import { TaskBoard } from "./task-board/TaskBoard";
-import { WsClient } from "./sync/ws-client";
+import { WsClient, type WsClientHandlers } from "./sync/ws-client";
 import { IntentPipeline } from "./ai/intent-pipeline";
 import { warmModel } from "./ai/classifier";
+import { ExportBriefButton } from "./ai/ExportBriefButton";
 import { Scrubber } from "./timetravel/Scrubber";
 
 const ROOM = new URL(window.location.href).searchParams.get("room") ?? "rm_demo";
@@ -16,6 +17,19 @@ interface Auth {
   user: { user_id: string; display: string; email: string };
 }
 
+const NOOP_HANDLERS: WsClientHandlers = {
+  onEvent: () => {},
+  onAck: () => {},
+  onHello: () => {},
+  onPresence: () => {},
+  onRoleChanged: () => {},
+  onRbacDenied: () => {},
+  onTaskUpserted: () => {},
+  onConnectionState: () => {},
+};
+
+void NOOP_HANDLERS; // satisfy noUnusedLocals in some configs
+
 export function App() {
   const [auth, setAuth] = useState<Auth | null>(null);
 
@@ -23,11 +37,17 @@ export function App() {
     return <Login onAuth={(token, user) => setAuth({ token, user })} />;
   }
 
-  return <Workspace auth={auth} room={ROOM} onSignOut={() => {
-    localStorage.removeItem("ligma.token");
-    localStorage.removeItem("ligma.user");
-    setAuth(null);
-  }} />;
+  return (
+    <Workspace
+      auth={auth}
+      room={ROOM}
+      onSignOut={() => {
+        localStorage.removeItem("ligma.token");
+        localStorage.removeItem("ligma.user");
+        setAuth(null);
+      }}
+    />
+  );
 }
 
 interface WorkspaceProps {
@@ -47,32 +67,39 @@ function Workspace({ auth, room, onSignOut }: WorkspaceProps) {
   const [selected, setSelected] = useState<string | null>(null);
   const [liveSeq, setLiveSeq] = useState(0);
   const [isReplay, setIsReplay] = useState(false);
+  const isReplayRef = useRef(false);
+  isReplayRef.current = isReplay;
   const [modelStatus, setModelStatus] = useState<string>("idle");
   const eventsRef = useRef<BaseEvent[]>([]);
-  const wsRef = useRef<WsClient | null>(null);
 
   const wsUrl = useMemo(() => {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     return `${proto}//${window.location.host}/ws`;
   }, []);
 
+  // Construct the WsClient eagerly so it's never null on first render.
+  const ws = useMemo(
+    () => new WsClient(wsUrl, auth.token, room, NOOP_HANDLERS),
+    [wsUrl, auth.token, room],
+  );
+
   useEffect(() => {
-    const ws = new WsClient(wsUrl, auth.token, room, {
+    ws.setHandlers({
       onConnectionState: (s) => setConn(s),
       onHello: (r) => setRole(r),
-      onAck: () => {
-        /* The op event is also broadcast back; we apply on onEvent. */
-      },
-      onEvent: (e) => {
-        if (!isReplay) {
-          store.applyEvent(e);
-          eventsRef.current.push(e);
-          setLiveSeq((s) => Math.max(s, e.seq));
-        } else {
-          // Buffer events while replaying; we'll fold them in on return-to-live.
-          eventsRef.current.push(e);
-          setLiveSeq((s) => Math.max(s, e.seq));
+      onAck: () => {},
+      onEvent: (e, isLocalEcho) => {
+        if (!isReplayRef.current) {
+          // Local echoes are already reflected in the store from the optimistic
+          // path; only seq/lamport metadata needs to advance.
+          if (!isLocalEcho || !store.snapshot().nodes.has(e.node_id ?? "")) {
+            store.applyEvent(e);
+          } else {
+            store.recordSeq(e.seq);
+          }
         }
+        eventsRef.current.push(e);
+        setLiveSeq((s) => Math.max(s, e.seq));
       },
       onPresence: (uid, cursor) => {
         if (uid === auth.user.user_id) return;
@@ -98,17 +125,16 @@ function Workspace({ auth, room, onSignOut }: WorkspaceProps) {
         });
       },
     });
-    wsRef.current = ws;
     ws.start();
 
-    // Warm the ONNX model in the background.
     warmModel();
     setModelStatus("loading");
 
     const onReady = () => setModelStatus("ready");
     const onProgress = (e: Event) => {
       const ce = e as CustomEvent<{ progress: number; file: string }>;
-      setModelStatus(`loading ${ce.detail.file ?? ""} ${(ce.detail.progress ?? 0).toFixed(0)}%`);
+      const pct = (ce.detail.progress ?? 0).toFixed(0);
+      setModelStatus(`loading ${ce.detail.file ?? ""} ${pct}%`);
     };
     window.addEventListener("ligma-model-ready", onReady);
     window.addEventListener("ligma-model-load", onProgress);
@@ -122,24 +148,18 @@ function Workspace({ auth, room, onSignOut }: WorkspaceProps) {
       window.removeEventListener("ligma-model-ready", onReady);
       window.removeEventListener("ligma-model-load", onProgress);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.token, room, wsUrl, store]);
+  }, [ws, store, auth.user.user_id]);
 
-  // When return-to-live happens, replay buffered events into the store.
+  // On return-to-live, replay the buffered event log.
   useEffect(() => {
     if (!isReplay) {
-      // re-apply the full event log after a scrub.
       store.clear();
       for (const e of eventsRef.current) store.applyEvent(e);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isReplay]);
+  }, [isReplay, store]);
 
   function onJumpToTask(sourceNode: string) {
     setSelected(sourceNode);
-    const node = store.snapshot().nodes.get(sourceNode);
-    if (!node) return;
-    // simple approach: nothing to scroll since the canvas is fixed; selection ring is the cue.
   }
 
   return (
@@ -154,6 +174,7 @@ function Workspace({ auth, room, onSignOut }: WorkspaceProps) {
         <span className="pill">model: {modelStatus}</span>
         <span className="pill">seq {liveSeq}</span>
         <span className="actor-switch">
+          <ExportBriefButton store={store} roomName={room} />
           <span style={{ fontSize: 12, color: "var(--ligma-fg-mute)", padding: "6px 8px" }}>
             {auth.user.display}
           </span>
@@ -163,7 +184,7 @@ function Workspace({ auth, room, onSignOut }: WorkspaceProps) {
 
       <Canvas
         store={store}
-        ws={wsRef.current!}
+        ws={ws}
         role={role}
         selfUserId={auth.user.user_id}
         remoteCursors={remoteCursors}
