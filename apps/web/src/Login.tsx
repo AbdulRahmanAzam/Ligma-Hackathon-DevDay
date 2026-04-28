@@ -1,4 +1,6 @@
 import { useState } from "react";
+import "./auth-screens.css";
+import { persistSession, quickLogin, signIn, signUp } from "./auth-api";
 
 interface Seeded {
   user_id: string;
@@ -13,38 +15,75 @@ const SEEDED: Seeded[] = [
   { user_id: "u_carol", display: "Carol", role: "Viewer", color: "#22c55e" },
 ];
 
+type Tab = "quick" | "signin" | "signup";
+
 interface Props {
   onAuth: () => void;
+  defaultTab?: Tab;
+  inviteRoomName?: string;
 }
 
-export function Login({ onAuth }: Props) {
+export function Login({ onAuth, defaultTab = "quick", inviteRoomName }: Props) {
+  const [tab, setTab] = useState<Tab>(defaultTab);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function loginAs(s: Seeded) {
+  // Sign-in / sign-up state
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [display, setDisplay] = useState("");
+
+  async function quickAs(s: Seeded) {
     setBusy(true);
     setError(null);
     try {
       const params = new URLSearchParams(window.location.search);
       const room_id = params.get("room") || "ligma-devday-main";
-      const r = await fetch("/api/auth/dev-token", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ user_id: s.user_id, room_id }),
-      });
-      if (!r.ok) throw new Error(`server ${r.status}`);
-      const data = (await r.json()) as {
-        token: string;
-        user_id: string;
-        display: string;
-        email: string;
-        role: "Lead" | "Contributor" | "Viewer";
-      };
-      window.localStorage.setItem("ligma.token", data.token);
-      window.localStorage.setItem("ligma.userId", data.user_id);
-      window.localStorage.setItem("ligma.userName", data.display);
-      window.localStorage.setItem("ligma.userColor", s.color);
-      window.localStorage.setItem("ligma.userRole", data.role);
+      const data = await quickLogin(s.user_id, room_id);
+      persistSession(
+        data.token,
+        {
+          user_id: data.user_id,
+          email: data.email,
+          display: data.display,
+          role: data.role,
+        },
+        s.color,
+      );
+      onAuth();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doSignIn() {
+    if (!email || !password) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await signIn(email, password);
+      persistSession(r.token, r.user);
+      onAuth();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doSignUp() {
+    if (!email || !password || !display) return;
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await signUp(email, password, display);
+      persistSession(r.token, r.user);
       onAuth();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -54,59 +93,123 @@ export function Login({ onAuth }: Props) {
   }
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        background: "#0c111c",
-        color: "#e6edf3",
-        fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, sans-serif',
-      }}
-    >
-      <div
-        style={{
-          background: "#131a2a",
-          border: "1px solid #243149",
-          borderRadius: 12,
-          padding: 32,
-          minWidth: 360,
-          boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
-        }}
-      >
-        <h1 style={{ margin: "0 0 8px", fontSize: 22, letterSpacing: "0.04em" }}>LIGMA</h1>
-        <p style={{ margin: "0 0 18px", color: "#94a3b8", fontSize: 13 }}>
-          Sign in as a seeded demo account. Each gets a real JWT.
-        </p>
-        {SEEDED.map((s) => (
-          <button
-            key={s.user_id}
-            disabled={busy}
-            onClick={() => loginAs(s)}
-            style={{
-              display: "block",
-              width: "100%",
-              background: "#1a2236",
-              color: "#e6edf3",
-              border: `1px solid ${s.role === "Lead" ? "#6366f1" : "#243149"}`,
-              padding: "12px 14px",
-              marginBottom: 8,
-              borderRadius: 8,
-              cursor: busy ? "wait" : "pointer",
-              textAlign: "left",
-              fontSize: 14,
-              fontFamily: "inherit",
-            }}
-          >
-            <strong style={{ color: s.color }}>{s.display}</strong>
-            <span style={{ color: "#94a3b8", marginLeft: 8 }}>· {s.role}</span>
+    <div className="ligma-shell" style={{ display: "grid", placeItems: "center" }}>
+      <div className="ligma-card" style={{ minWidth: 380, maxWidth: 420 }}>
+        <h1 className="ligma-h1">LIGMA</h1>
+        <div className="ligma-mute" style={{ marginBottom: 16 }}>
+          {inviteRoomName
+            ? `Sign in to join "${inviteRoomName}".`
+            : "Sign in or create an account to start."}
+        </div>
+
+        <div className="tabs">
+          <button className={`tab ${tab === "quick" ? "active" : ""}`} onClick={() => setTab("quick")}>
+            Quick
           </button>
-        ))}
-        {error && (
-          <div style={{ color: "#ef4444", fontSize: 12, marginTop: 8 }}>error: {error}</div>
+          <button className={`tab ${tab === "signin" ? "active" : ""}`} onClick={() => setTab("signin")}>
+            Sign in
+          </button>
+          <button className={`tab ${tab === "signup" ? "active" : ""}`} onClick={() => setTab("signup")}>
+            Sign up
+          </button>
+        </div>
+
+        {tab === "quick" && (
+          <div>
+            <div className="ligma-mute" style={{ marginBottom: 10 }}>
+              Demo accounts (each gets a real JWT):
+            </div>
+            {SEEDED.map((s) => (
+              <button
+                key={s.user_id}
+                disabled={busy}
+                onClick={() => quickAs(s)}
+                className="ligma-btn"
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  marginBottom: 8,
+                  borderColor: s.role === "Lead" ? "#6366f1" : "#243149",
+                }}
+              >
+                <strong style={{ color: s.color }}>{s.display}</strong>
+                <span style={{ color: "#94a3b8", marginLeft: 8 }}>· {s.role}</span>
+              </button>
+            ))}
+          </div>
         )}
-        <div style={{ color: "#64748b", fontSize: 11, marginTop: 14 }}>
-          For multi-user demo: open a second tab and pick a different account.
+
+        {tab === "signin" && (
+          <div>
+            <input
+              className="ligma-input"
+              type="email"
+              autoComplete="email"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={busy}
+            />
+            <input
+              className="ligma-input"
+              type="password"
+              autoComplete="current-password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={busy}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") doSignIn();
+              }}
+            />
+            <button className="ligma-btn primary" style={{ width: "100%" }} onClick={doSignIn} disabled={busy}>
+              {busy ? "Signing in…" : "Sign in"}
+            </button>
+          </div>
+        )}
+
+        {tab === "signup" && (
+          <div>
+            <input
+              className="ligma-input"
+              type="text"
+              autoComplete="name"
+              placeholder="Display name"
+              value={display}
+              onChange={(e) => setDisplay(e.target.value)}
+              disabled={busy}
+            />
+            <input
+              className="ligma-input"
+              type="email"
+              autoComplete="email"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={busy}
+            />
+            <input
+              className="ligma-input"
+              type="password"
+              autoComplete="new-password"
+              placeholder="Password (8+ chars)"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={busy}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") doSignUp();
+              }}
+            />
+            <button className="ligma-btn primary" style={{ width: "100%" }} onClick={doSignUp} disabled={busy}>
+              {busy ? "Creating account…" : "Create account"}
+            </button>
+          </div>
+        )}
+
+        {error && <div className="error-pill">{error}</div>}
+
+        <div className="ligma-mute" style={{ fontSize: 11, marginTop: 14 }}>
+          Multi-user demo: open a second tab, switch accounts there.
         </div>
       </div>
     </div>

@@ -51,6 +51,7 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import 'tldraw/tldraw.css'
 import './App.css'
+import { InviteModal } from './InviteModal'
 
 type UserRole = 'Lead' | 'Contributor' | 'Viewer'
 type Intent = 'action' | 'decision' | 'question' | 'reference'
@@ -206,6 +207,47 @@ function readSearchRoomId() {
 
 function getStoredValue(key: string, fallback: string) {
   return window.localStorage.getItem(key) ?? fallback
+}
+
+/**
+ * crypto.randomUUID() is gated behind secure-context in some browsers (notably
+ * older Safari). When unavailable, fall back to a UUIDv4 built from
+ * crypto.getRandomValues, which is always present in any browser that ships
+ * SubtleCrypto. Math.random() is the last resort.
+ */
+function safeRandomUUID(): string {
+  const c = (typeof globalThis !== 'undefined' ? globalThis.crypto : undefined) as
+    | (Crypto & { randomUUID?: () => string })
+    | undefined
+  if (c?.randomUUID) {
+    try {
+      return c.randomUUID()
+    } catch {
+      /* fall through */
+    }
+  }
+  const bytes = new Uint8Array(16)
+  if (c?.getRandomValues) {
+    c.getRandomValues(bytes)
+  } else {
+    for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256)
+  }
+  // RFC 4122 v4
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80
+  const hex: string[] = []
+  for (let i = 0; i < 16; i++) hex.push(bytes[i]!.toString(16).padStart(2, '0'))
+  return (
+    hex.slice(0, 4).join('') +
+    '-' +
+    hex.slice(4, 6).join('') +
+    '-' +
+    hex.slice(6, 8).join('') +
+    '-' +
+    hex.slice(8, 10).join('') +
+    '-' +
+    hex.slice(10, 16).join('')
+  )
 }
 
 function readStoredRole() {
@@ -498,8 +540,15 @@ function dedupeCanvasTasks(tasks: CanvasTask[]) {
   return nextTasks
 }
 
-function App() {
+interface AppProps {
+  onBackToHome?: () => void
+  roomError?: string | null
+  clearRoomError?: () => void
+}
+
+function App({ onBackToHome, roomError, clearRoomError }: AppProps = {}) {
   const [roomId, setRoomId] = useState(readSearchRoomId)
+  const [showInvite, setShowInvite] = useState(false)
   const [roomInput, setRoomInput] = useState(roomId)
   const [userName, setUserName] = useState(() => getStoredValue('ligma.userName', 'DevDay Lead'))
   const [userColor, setUserColor] = useState(() => getStoredValue('ligma.userColor', USER_COLORS[0]))
@@ -540,13 +589,13 @@ function App() {
   // Timer refs for debouncing expensive operations during high-frequency store updates
   const snapshotTimerRef = useRef<number | null>(null)
   const badgeRafRef = useRef<number | null>(null)
-  const presenceSessionId = useMemo(() => crypto.randomUUID(), [])
+  const presenceSessionId = useMemo(() => safeRandomUUID(), [])
   const taskDoc = useMemo(() => new Y.Doc(), [])
   const taskArray = useMemo(() => taskDoc.getArray<CanvasTask>('tasks'), [taskDoc])
 
   const userPreferences = useAtom<TLUserPreferences>('ligma-user-preferences', () => ({
     ...defaultUserPreferences,
-    id: getStoredValue('ligma.userId', crypto.randomUUID()),
+    id: getStoredValue('ligma.userId', safeRandomUUID()),
     name: userName,
     color: userColor,
     colorScheme: 'light',
@@ -1222,6 +1271,18 @@ function App() {
   return (
     <main className="workspace-shell">
       <header className="topbar">
+        {onBackToHome && (
+          <button
+            type="button"
+            onClick={onBackToHome}
+            className="ghost-button"
+            title="Back to whiteboards"
+            style={{ marginRight: 6 }}
+          >
+            <ChevronLeft size={16} aria-hidden="true" />
+            <span>Rooms</span>
+          </button>
+        )}
         <div className="brand-lockup" aria-label="Ligma workspace">
           <span className="brand-mark">L</span>
           <div>
@@ -1249,6 +1310,17 @@ function App() {
             <Copy size={16} aria-hidden="true" />
             <span>{shareLabel}</span>
           </button>
+          {userRole === 'Lead' && (
+            <button
+              className="ghost-button"
+              type="button"
+              title="Create invite link"
+              onClick={() => setShowInvite(true)}
+            >
+              <Users size={16} aria-hidden="true" />
+              <span>Invite</span>
+            </button>
+          )}
         </div>
 
         <div className="identity-controls">
@@ -1545,6 +1617,28 @@ function App() {
           </section>
         </aside>
       </section>
+      {showInvite && (
+        <InviteModal room_id={roomId} onClose={() => setShowInvite(false)} />
+      )}
+      {roomError && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 24,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(185, 28, 28, 0.95)',
+            color: 'white',
+            padding: '10px 16px',
+            borderRadius: 8,
+            fontSize: 13,
+            zIndex: 200,
+          }}
+          onClick={() => clearRoomError?.()}
+        >
+          {roomError} (click to dismiss)
+        </div>
+      )}
     </main>
   )
 }

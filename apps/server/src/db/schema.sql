@@ -68,3 +68,17 @@ CREATE TABLE IF NOT EXISTS room_members (
   PRIMARY KEY (room_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_room_members_user ON room_members(user_id);
+
+-- Invite tokens. Lead creates them; URL contains the token; whoever opens the
+-- URL while authenticated gets auto-added to the room with the encoded role.
+CREATE TABLE IF NOT EXISTS invites (
+  token          TEXT PRIMARY KEY,
+  room_id        TEXT NOT NULL,
+  role           TEXT NOT NULL CHECK (role IN ('Contributor','Viewer')),
+  created_by     TEXT NOT NULL,
+  created_at     INTEGER NOT NULL DEFAULT (CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)),
+  expires_at     INTEGER NOT NULL,
+  redeemed_count INTEGER NOT NULL DEFAULT 0,
+  revoked_at     INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_invites_room ON invites(room_id);
