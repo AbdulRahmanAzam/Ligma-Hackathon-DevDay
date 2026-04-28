@@ -1,0 +1,207 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { type BaseEvent, type Role, type TaskRow } from "@ligma/shared";
+import { Login } from "./auth/Login";
+import { CanvasStore } from "./canvas/store";
+import { Canvas } from "./canvas/Canvas";
+import { TaskBoard } from "./task-board/TaskBoard";
+import { WsClient, type WsClientHandlers } from "./sync/ws-client";
+import { IntentPipeline } from "./ai/intent-pipeline";
+import { warmModel } from "./ai/classifier";
+import { ExportBriefButton } from "./ai/ExportBriefButton";
+import { Scrubber } from "./timetravel/Scrubber";
+
+const ROOM = new URL(window.location.href).searchParams.get("room") ?? "rm_demo";
+
+interface Auth {
+  token: string;
+  user: { user_id: string; display: string; email: string };
+}
+
+const NOOP_HANDLERS: WsClientHandlers = {
+  onEvent: () => {},
+  onAck: () => {},
+  onHello: () => {},
+  onPresence: () => {},
+  onRoleChanged: () => {},
+  onRbacDenied: () => {},
+  onTaskUpserted: () => {},
+  onConnectionState: () => {},
+};
+
+void NOOP_HANDLERS; // satisfy noUnusedLocals in some configs
+
+export function App() {
+  const [auth, setAuth] = useState<Auth | null>(null);
+
+  if (!auth) {
+    return <Login onAuth={(token, user) => setAuth({ token, user })} />;
+  }
+
+  return (
+    <Workspace
+      auth={auth}
+      room={ROOM}
+      onSignOut={() => {
+        localStorage.removeItem("ligma.token");
+        localStorage.removeItem("ligma.user");
+        setAuth(null);
+      }}
+    />
+  );
+}
+
+interface WorkspaceProps {
+  auth: Auth;
+  room: string;
+  onSignOut: () => void;
+}
+
+function Workspace({ auth, room, onSignOut }: WorkspaceProps) {
+  const store = useMemo(() => new CanvasStore(), []);
+  const [role, setRole] = useState<Role>("viewer");
+  const [tasks, setTasks] = useState<Map<string, TaskRow>>(new Map());
+  const [remoteCursors, setRemoteCursors] = useState<Map<string, { x: number; y: number }>>(
+    new Map(),
+  );
+  const [conn, setConn] = useState<"connecting" | "open" | "closed">("connecting");
+  const [selected, setSelected] = useState<string | null>(null);
+  const [liveSeq, setLiveSeq] = useState(0);
+  const [isReplay, setIsReplay] = useState(false);
+  const isReplayRef = useRef(false);
+  isReplayRef.current = isReplay;
+  const [modelStatus, setModelStatus] = useState<string>("idle");
+  const eventsRef = useRef<BaseEvent[]>([]);
+
+  const wsUrl = useMemo(() => {
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${window.location.host}/ws`;
+  }, []);
+
+  // Construct the WsClient eagerly so it's never null on first render.
+  const ws = useMemo(
+    () => new WsClient(wsUrl, auth.token, room, NOOP_HANDLERS),
+    [wsUrl, auth.token, room],
+  );
+
+  useEffect(() => {
+    ws.setHandlers({
+      onConnectionState: (s) => setConn(s),
+      onHello: (r) => setRole(r),
+      onAck: () => {},
+      onEvent: (e, isLocalEcho) => {
+        if (!isReplayRef.current) {
+          // Local echoes are already reflected in the store from the optimistic
+          // path; only seq/lamport metadata needs to advance.
+          if (!isLocalEcho || !store.snapshot().nodes.has(e.node_id ?? "")) {
+            store.applyEvent(e);
+          } else {
+            store.recordSeq(e.seq);
+          }
+        }
+        eventsRef.current.push(e);
+        setLiveSeq((s) => Math.max(s, e.seq));
+      },
+      onPresence: (uid, cursor) => {
+        if (uid === auth.user.user_id) return;
+        setRemoteCursors((prev) => {
+          const next = new Map(prev);
+          next.set(uid, cursor);
+          return next;
+        });
+      },
+      onRoleChanged: (uid, _node, newRole) => {
+        if (uid === auth.user.user_id) setRole(newRole);
+      },
+      onRbacDenied: (_id, reason, kind) => {
+        window.dispatchEvent(
+          new CustomEvent("ligma-rbac-denied", { detail: `${kind}: ${reason}` }),
+        );
+      },
+      onTaskUpserted: (task) => {
+        setTasks((prev) => {
+          const next = new Map(prev);
+          next.set(task.task_id, task);
+          return next;
+        });
+      },
+    });
+    ws.start();
+
+    warmModel();
+    setModelStatus("loading");
+
+    const onReady = () => setModelStatus("ready");
+    const onProgress = (e: Event) => {
+      const ce = e as CustomEvent<{ progress: number; file: string }>;
+      const pct = (ce.detail.progress ?? 0).toFixed(0);
+      setModelStatus(`loading ${ce.detail.file ?? ""} ${pct}%`);
+    };
+    window.addEventListener("ligma-model-ready", onReady);
+    window.addEventListener("ligma-model-load", onProgress);
+
+    const pipeline = new IntentPipeline(store, ws);
+    const stopPipeline = pipeline.start();
+
+    return () => {
+      stopPipeline();
+      ws.stop();
+      window.removeEventListener("ligma-model-ready", onReady);
+      window.removeEventListener("ligma-model-load", onProgress);
+    };
+  }, [ws, store, auth.user.user_id]);
+
+  // On return-to-live, replay the buffered event log.
+  useEffect(() => {
+    if (!isReplay) {
+      store.clear();
+      for (const e of eventsRef.current) store.applyEvent(e);
+    }
+  }, [isReplay, store]);
+
+  function onJumpToTask(sourceNode: string) {
+    setSelected(sourceNode);
+  }
+
+  return (
+    <div className="app-shell">
+      <div className="topbar">
+        <h1>LIGMA</h1>
+        <span className="pill">room {room}</span>
+        <span className={`pill role-${role}`}>{role}</span>
+        <span className="pill">
+          {conn === "open" ? "✓ connected" : conn === "connecting" ? "… connecting" : "× offline"}
+        </span>
+        <span className="pill">model: {modelStatus}</span>
+        <span className="pill">seq {liveSeq}</span>
+        <span className="actor-switch">
+          <ExportBriefButton store={store} roomName={room} />
+          <span style={{ fontSize: 12, color: "var(--ligma-fg-mute)", padding: "6px 8px" }}>
+            {auth.user.display}
+          </span>
+          <button onClick={onSignOut}>Switch user</button>
+        </span>
+      </div>
+
+      <Canvas
+        store={store}
+        ws={ws}
+        role={role}
+        selfUserId={auth.user.user_id}
+        remoteCursors={remoteCursors}
+        onSelectNode={setSelected}
+        selectedNode={selected}
+        isReplay={isReplay}
+      />
+
+      <TaskBoard tasks={tasks} onJump={onJumpToTask} />
+
+      <Scrubber
+        liveSeq={liveSeq}
+        events={eventsRef.current}
+        store={store}
+        isReplay={isReplay}
+        setIsReplay={setIsReplay}
+      />
+    </div>
+  );
+}
