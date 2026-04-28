@@ -55,13 +55,42 @@ function setRoomInUrl(room_id: string | null): void {
 
 type View =
   | { kind: "home" }
-  | { kind: "room"; room_id: string }
+  | { kind: "room"; room_id: string; guestInvite?: string }
   | { kind: "invite-pending"; token: string; info: InviteInfo | null; error: string | null };
 
 function Root() {
   const [authed, setAuthed] = useState<boolean>(() => Boolean(readToken()));
   const [view, setView] = useState<View>(() => initialView());
   const [acceptError, setAcceptError] = useState<string | null>(null);
+
+  // initialView dispatches a custom event once it has resolved invite metadata;
+  // capture it so we can route Viewer invites straight in as guests, and show
+  // the room name on the Login screen for Contributor invites.
+  useEffect(() => {
+    function onInviteInfo(e: Event) {
+      const detail = (e as CustomEvent<InviteInfo>).detail;
+      setView((prev) => {
+        if (prev.kind !== "invite-pending") return prev;
+        return { ...prev, info: detail };
+      });
+    }
+    window.addEventListener("ligma-invite-info", onInviteInfo as EventListener);
+    return () => window.removeEventListener("ligma-invite-info", onInviteInfo as EventListener);
+  }, []);
+
+  // Anonymous Viewer fast-path: if the invite is read-only, drop the visitor
+  // straight into the room as a guest — no signup required.
+  useEffect(() => {
+    if (authed) return;
+    if (view.kind !== "invite-pending") return;
+    if (!view.info) return;
+    if (view.info.role !== "Viewer") return;
+    setView({
+      kind: "room",
+      room_id: view.info.room_id,
+      guestInvite: view.token,
+    });
+  }, [authed, view]);
 
   // After auth state changes, re-derive view (so post-login we honor ?invite= or ?room=).
   useEffect(() => {
@@ -104,6 +133,21 @@ function Root() {
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
+
+  // Anonymous viewer in a guest room — render App without auth.
+  if (!authed && view.kind === "room" && view.guestInvite) {
+    return (
+      <App
+        key={view.room_id}
+        guestInviteToken={view.guestInvite}
+        onBackToHome={() => {
+          window.location.href = "/";
+        }}
+        roomError={null}
+        clearRoomError={() => {}}
+      />
+    );
+  }
 
   if (!authed) {
     // If they're hitting an invite link unauthenticated, show login with a hint.
@@ -159,8 +203,8 @@ function Root() {
         minHeight: "100vh",
         display: "grid",
         placeItems: "center",
-        background: "#0c111c",
-        color: "#94a3b8",
+        background: "#f8fafc",
+        color: "#475569",
         fontFamily: "ui-sans-serif, system-ui, -apple-system, Inter, sans-serif",
       }}
     >

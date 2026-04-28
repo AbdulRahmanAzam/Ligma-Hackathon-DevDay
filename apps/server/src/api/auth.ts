@@ -86,6 +86,27 @@ export function getUser(
     | null;
 }
 
+export function resolveInviteToken(
+  token: string,
+): { room_id: string; role: "Contributor" | "Viewer" } | null {
+  const inv = db
+    .prepare(
+      `SELECT room_id, role, expires_at, revoked_at FROM invites WHERE token = ?`,
+    )
+    .get(token) as
+    | {
+        room_id: string;
+        role: "Contributor" | "Viewer";
+        expires_at: number;
+        revoked_at: number | null;
+      }
+    | undefined;
+  if (!inv) return null;
+  if (inv.revoked_at) return null;
+  if (Date.now() > inv.expires_at) return null;
+  return { room_id: inv.room_id, role: inv.role };
+}
+
 export function getRoleInRoom(user_id: string, room_id: string): "Lead" | "Contributor" | "Viewer" | null {
   const m = db
     .prepare(`SELECT role FROM room_members WHERE room_id = ? AND user_id = ?`)

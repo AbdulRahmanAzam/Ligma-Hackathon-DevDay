@@ -151,3 +151,51 @@ export async function acceptInvite(token: string): Promise<{ room_id: string; ro
     body: JSON.stringify({ token }),
   });
 }
+
+// --- room admin (Lead-only) ---
+
+export interface RoomMember {
+  user_id: string;
+  role: "Lead" | "Contributor" | "Viewer";
+  display: string;
+  email: string;
+}
+
+export interface RoomDetail {
+  room_id: string;
+  name: string;
+  owner_id: string;
+  default_role: "Lead" | "Contributor" | "Viewer";
+  created_at: number;
+  members: RoomMember[];
+}
+
+export async function getRoom(room_id: string): Promise<RoomDetail> {
+  return jsonFetch(`/api/rooms/${encodeURIComponent(room_id)}`, { auth: true });
+}
+
+export async function removeMember(room_id: string, user_id: string): Promise<void> {
+  await jsonFetch(
+    `/api/rooms/${encodeURIComponent(room_id)}/members/${encodeURIComponent(user_id)}`,
+    { method: "DELETE", auth: true },
+  );
+}
+
+export interface ActiveInvite {
+  token: string;
+  role: "Contributor" | "Viewer";
+  created_at: number;
+  expires_at: number;
+  redeemed_count: number;
+}
+
+export async function listInvites(room_id: string): Promise<ActiveInvite[]> {
+  return jsonFetch(`/api/rooms/${encodeURIComponent(room_id)}/invites`, { auth: true });
+}
+
+export async function revokeInvite(room_id: string, token: string): Promise<void> {
+  await jsonFetch(
+    `/api/rooms/${encodeURIComponent(room_id)}/invites/${encodeURIComponent(token)}`,
+    { method: "DELETE", auth: true },
+  );
+}

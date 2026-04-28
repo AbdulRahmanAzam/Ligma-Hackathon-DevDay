@@ -194,8 +194,8 @@ function normalizeRoomId(value: string) {
   const normalized = value
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^[-_]+|[-_]+$/g, '')
 
   return normalized || DEFAULT_ROOM_ID
 }
@@ -260,20 +260,25 @@ function getColorIndex(color: string) {
   return colorIndex >= 0 ? colorIndex : 0
 }
 
-function getSyncUrl() {
+function getSyncUrl(guestInviteToken?: string) {
   const configuredUrl = import.meta.env.VITE_LIGMA_SYNC_URL as string | undefined
   if (configuredUrl) {
-    return appendToken(configuredUrl)
+    return appendAuth(configuredUrl, guestInviteToken)
   }
 
   // Default: same-origin /ligma-sync (Vite proxies it in dev; Fastify serves
-  // it in prod). The JWT is appended as ?token=... per our gateway contract.
+  // it in prod). For signed-in users we send ?token=<jwt>; for anonymous
+  // viewers arriving via a Viewer invite we send ?invite=<token> instead.
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
   const url = `${protocol}://${window.location.host}/ligma-sync`
-  return appendToken(url)
+  return appendAuth(url, guestInviteToken)
 }
 
-function appendToken(url: string): string {
+function appendAuth(url: string, guestInviteToken?: string): string {
+  if (guestInviteToken) {
+    const sep = url.includes('?') ? '&' : '?'
+    return `${url}${sep}invite=${encodeURIComponent(guestInviteToken)}`
+  }
   const token = window.localStorage.getItem('ligma.token')
   if (!token) return url
   const sep = url.includes('?') ? '&' : '?'
@@ -544,18 +549,23 @@ interface AppProps {
   onBackToHome?: () => void
   roomError?: string | null
   clearRoomError?: () => void
+  guestInviteToken?: string
 }
 
-function App({ onBackToHome, roomError, clearRoomError }: AppProps = {}) {
+function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppProps = {}) {
+  const isGuest = Boolean(guestInviteToken)
   const [roomId, setRoomId] = useState(readSearchRoomId)
   const [showInvite, setShowInvite] = useState(false)
   const [roomInput, setRoomInput] = useState(roomId)
-  const [userName, setUserName] = useState(() => getStoredValue('ligma.userName', 'DevDay Lead'))
+  const [userName, setUserName] = useState(() =>
+    isGuest ? `Guest ${Math.floor(Math.random() * 9000 + 1000)}` : getStoredValue('ligma.userName', 'DevDay Lead'),
+  )
   const [userColor, setUserColor] = useState(() => getStoredValue('ligma.userColor', USER_COLORS[0]))
-  const [userRole, setUserRole] = useState<UserRole>(readStoredRole)
+  const [userRole, setUserRole] = useState<UserRole>(() => (isGuest ? 'Viewer' : readStoredRole()))
   // Fetch the actual role for THIS specific room so the Invite button etc.
   // reflect per-room membership rather than the role baked into the JWT.
   useEffect(() => {
+    if (isGuest) return
     let cancelled = false
     const userId = window.localStorage.getItem('ligma.userId')
     const token = window.localStorage.getItem('ligma.token')
@@ -566,11 +576,20 @@ function App({ onBackToHome, roomError, clearRoomError }: AppProps = {}) {
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (cancelled || !data) return
-        const members = (data as { members?: Array<{ user_id: string; role: UserRole }> }).members ?? []
+        const room = data as {
+          owner_id?: string
+          members?: Array<{ user_id: string; role: UserRole }>
+        }
+        const members = room.members ?? []
         const me = members.find((m) => m.user_id === userId)
-        if (me) {
-          setUserRole(me.role)
-          window.localStorage.setItem('ligma.userRole', me.role)
+        // The owner_id is the source of truth for "Lead-ness" — they created
+        // the room. If membership row hasn't propagated yet, falling back to
+        // owner_id keeps the Invite button visible immediately after creation.
+        let role: UserRole | null = me?.role ?? null
+        if (!role && room.owner_id === userId) role = 'Lead'
+        if (role) {
+          setUserRole(role)
+          window.localStorage.setItem('ligma.userRole', role)
         }
       })
       .catch(() => {
@@ -785,7 +804,7 @@ function App({ onBackToHome, roomError, clearRoomError }: AppProps = {}) {
       if (disposed) return
 
       setConnectionStatus('connecting')
-      const socket = new WebSocket(getSyncUrl())
+      const socket = new WebSocket(getSyncUrl(guestInviteToken))
       socketRef.current = socket
 
       socket.addEventListener('open', () => {
@@ -1397,18 +1416,20 @@ function App({ onBackToHome, roomError, clearRoomError }: AppProps = {}) {
               />
             ))}
           </div>
-          <div className="segmented" aria-label="Role">
-            {ROLES.map((role) => (
-              <button
-                className={role === userRole ? 'active' : ''}
-                key={role}
-                type="button"
-                onClick={() => setUserRole(role)}
-              >
-                {role}
-              </button>
-            ))}
-          </div>
+          {!isGuest && (
+            <div className="segmented" aria-label="Role">
+              {ROLES.map((role) => (
+                <button
+                  className={role === userRole ? 'active' : ''}
+                  key={role}
+                  type="button"
+                  onClick={() => setUserRole(role)}
+                >
+                  {role}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </header>
 

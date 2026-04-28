@@ -37,11 +37,11 @@ export function Home({ onOpenRoom, onSignOut }: Props) {
     onSignOut();
   }
 
-  async function handleCreate(name: string, default_role: "Contributor" | "Viewer") {
+  async function handleCreate(name: string) {
     setCreating(true);
     setError(null);
     try {
-      const r = await createRoom(name, default_role);
+      const r = await createRoom(name, "Contributor");
       setShowNew(false);
       onOpenRoom(r.room_id);
     } catch (err) {
@@ -127,19 +127,18 @@ export function Home({ onOpenRoom, onSignOut }: Props) {
 interface NewRoomModalProps {
   busy: boolean;
   onCancel: () => void;
-  onCreate: (name: string, default_role: "Contributor" | "Viewer") => void;
+  onCreate: (name: string) => void;
 }
 
 function NewRoomModal({ busy, onCancel, onCreate }: NewRoomModalProps) {
   const [name, setName] = useState("");
-  const [role, setRole] = useState<"Contributor" | "Viewer">("Contributor");
 
   return (
     <div className="modal-backdrop" onClick={onCancel}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>New whiteboard</h3>
         <div className="ligma-mute" style={{ marginBottom: 16 }}>
-          You'll be the Lead. Set the default role for invitees.
+          You'll be the Lead.
         </div>
         <input
           className="ligma-input"
@@ -149,37 +148,16 @@ function NewRoomModal({ busy, onCancel, onCreate }: NewRoomModalProps) {
           onChange={(e) => setName(e.target.value)}
           maxLength={80}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && name.trim()) onCreate(name.trim(), role);
+            if (e.key === "Enter" && name.trim()) onCreate(name.trim());
           }}
         />
-        <div className="ligma-mute" style={{ fontSize: 12, marginBottom: 6 }}>
-          Default role for invite links:
-        </div>
-        <div style={{ display: "flex", gap: 6 }}>
-          <button
-            className={`ligma-btn ${role === "Contributor" ? "primary" : ""}`}
-            onClick={() => setRole("Contributor")}
-            type="button"
-            style={{ flex: 1 }}
-          >
-            Contributor
-          </button>
-          <button
-            className={`ligma-btn ${role === "Viewer" ? "primary" : ""}`}
-            onClick={() => setRole("Viewer")}
-            type="button"
-            style={{ flex: 1 }}
-          >
-            Viewer
-          </button>
-        </div>
         <div className="row">
           <button className="ligma-btn ghost" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
           <button
             className="ligma-btn primary"
-            onClick={() => onCreate(name.trim(), role)}
+            onClick={() => onCreate(name.trim())}
             disabled={busy || !name.trim()}
           >
             {busy ? "Creating…" : "Create"}

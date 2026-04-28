@@ -3,7 +3,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import * as Y from "yjs";
 import { v4 as uuid } from "uuid";
 import { verifyToken } from "../api/auth.js";
-import { getRoleInRoom } from "../api/auth.js";
+import { getRoleInRoom, resolveInviteToken } from "../api/auth.js";
 import {
   activeUserList,
   broadcast,
@@ -29,21 +29,49 @@ export function attachWs(httpServer: Server, path = "/ligma-sync"): void {
       return;
     }
     const token = url.searchParams.get("token");
-    if (!token) {
-      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-    const claims = await verifyToken(token);
-    if (!claims) {
-      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-      socket.destroy();
+    const invite = url.searchParams.get("invite");
+
+    if (token) {
+      const claims = await verifyToken(token);
+      if (!claims) {
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        onConnection(ws, {
+          kind: "user",
+          userId: claims.sub,
+          displayName: claims.display,
+        });
+      });
       return;
     }
 
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      onConnection(ws, claims.sub, claims.display);
-    });
+    if (invite) {
+      const resolved = resolveInviteToken(invite);
+      // Anonymous WS access is only for read-only viewer invites. Contributor
+      // invites still require sign-in so we can attribute their writes.
+      if (!resolved || resolved.role !== "Viewer") {
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      const guestId = `guest_${Math.random().toString(36).slice(2, 10)}`;
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        onConnection(ws, {
+          kind: "guest",
+          userId: guestId,
+          displayName: "Guest",
+          forcedRole: "Viewer",
+          inviteRoomId: resolved.room_id,
+        });
+      });
+      return;
+    }
+
+    socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+    socket.destroy();
   });
 }
 
@@ -61,7 +89,19 @@ function sanitizeRole(v: unknown): Role {
   return v === "Lead" || v === "Contributor" || v === "Viewer" ? v : "Viewer";
 }
 
-function onConnection(ws: WebSocket, userId: string, displayName: string): void {
+type ConnectionAuth =
+  | { kind: "user"; userId: string; displayName: string }
+  | {
+      kind: "guest";
+      userId: string;
+      displayName: string;
+      forcedRole: "Viewer";
+      inviteRoomId: string;
+    };
+
+function onConnection(ws: WebSocket, auth: ConnectionAuth): void {
+  const userId = auth.userId;
+  const displayName = auth.displayName;
   let roomId = "";
   let session: ClientSession | null = null;
   let aliveTimer: NodeJS.Timeout | null = null;
@@ -84,8 +124,16 @@ function onConnection(ws: WebSocket, userId: string, displayName: string): void 
       // The client claims a role in `hello`, but we trust *our* server-side
       // assignment from room_members / default_role. The client's role string
       // is informational only.
-      roomId = String(msg.roomId || "ligma-devday-main");
-      const serverRole = getRoleInRoom(userId, roomId) ?? "Viewer";
+      if (auth.kind === "guest") {
+        // Guests can only enter the room their invite was scoped to.
+        roomId = auth.inviteRoomId;
+      } else {
+        roomId = String(msg.roomId || "ligma-devday-main");
+      }
+      const serverRole: Role =
+        auth.kind === "guest"
+          ? auth.forcedRole
+          : getRoleInRoom(userId, roomId) ?? "Viewer";
       const clientRole = sanitizeRole(msg.role);
 
       session = {

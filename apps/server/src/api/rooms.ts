@@ -93,6 +93,35 @@ export function registerRoomRoutes(app: FastifyInstance): void {
     return reply.code(204).send();
   });
 
+  // Lead-only: remove a member from the room. Cannot kick yourself or the owner.
+  app.delete<{ Params: { id: string; userId: string } }>(
+    "/api/rooms/:id/members/:userId",
+    async (req, reply) => {
+      const claims = await requireAuth(req);
+      if (!claims) return reply.code(401).send({ error: "unauthorized" });
+      const ownerCheck = db
+        .prepare(`SELECT role FROM room_members WHERE room_id = ? AND user_id = ?`)
+        .get(req.params.id, claims.sub) as { role: Role } | undefined;
+      if (!ownerCheck || ownerCheck.role !== "Lead") {
+        return reply.code(403).send({ error: "lead_required" });
+      }
+      const room = db
+        .prepare(`SELECT owner_id FROM rooms WHERE room_id = ?`)
+        .get(req.params.id) as { owner_id: string } | undefined;
+      if (!room) return reply.code(404).send({ error: "not_found" });
+      if (req.params.userId === room.owner_id) {
+        return reply.code(400).send({ error: "cannot_remove_owner" });
+      }
+      if (req.params.userId === claims.sub) {
+        return reply.code(400).send({ error: "cannot_remove_self" });
+      }
+      db.prepare(
+        `DELETE FROM room_members WHERE room_id = ? AND user_id = ?`,
+      ).run(req.params.id, req.params.userId);
+      return reply.code(204).send();
+    },
+  );
+
   app.get<{ Params: { id: string }; Querystring: { from?: string } }>(
     "/api/rooms/:id/events",
     async (req, reply) => {
@@ -156,6 +185,32 @@ export function registerRoomRoutes(app: FastifyInstance): void {
       expires_at: expires,
     });
   });
+
+  // Lead-only: list active (not revoked, not expired) invites for this room.
+  app.get<{ Params: { id: string } }>(
+    "/api/rooms/:id/invites",
+    async (req, reply) => {
+      const claims = await requireAuth(req);
+      if (!claims) return reply.code(401).send({ error: "unauthorized" });
+      const ownerCheck = db
+        .prepare(`SELECT role FROM room_members WHERE room_id = ? AND user_id = ?`)
+        .get(req.params.id, claims.sub) as
+        | { role: "Lead" | "Contributor" | "Viewer" }
+        | undefined;
+      if (!ownerCheck || ownerCheck.role !== "Lead") {
+        return reply.code(403).send({ error: "lead_required" });
+      }
+      const rows = db
+        .prepare(
+          `SELECT token, role, created_at, expires_at, redeemed_count
+           FROM invites
+           WHERE room_id = ? AND revoked_at IS NULL AND expires_at > ?
+           ORDER BY created_at DESC`,
+        )
+        .all(req.params.id, Date.now());
+      return rows;
+    },
+  );
 
   // Look up an invite (no auth required, used to render preview UI).
   app.get<{ Params: { token: string } }>(
