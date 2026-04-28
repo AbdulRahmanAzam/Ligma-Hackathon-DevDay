@@ -1,26 +1,33 @@
 {
   "name": "@ligma/web",
-  "version": "1.0.0",
   "private": true,
+  "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -p tsconfig.json && vite build",
-    "preview": "vite preview",
-    "lint": "echo skip"
+    "build": "tsc -b && vite build",
+    "lint": "echo skip",
+    "preview": "vite preview"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.7.0",
     "@ligma/shared": "workspace:*",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "framer-motion": "^12.38.0",
+    "lucide-react": "^0.446.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "tldraw": "^3.15.6",
+    "tslib": "^2.8.1",
     "uuid": "^11.0.3",
-    "yjs": "^13.6.20"
+    "ws": "^8.20.0",
+    "yjs": "^13.6.30"
   },
   "devDependencies": {
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
+    "@types/node": "^22.9.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.3.3",
     "typescript": "5.6.3",
     "vite": "^5.4.10"
