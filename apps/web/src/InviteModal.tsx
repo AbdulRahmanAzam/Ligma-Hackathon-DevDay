@@ -30,11 +30,34 @@ export function InviteModal({ room_id, onClose }: Props) {
 
   async function copy() {
     if (!link) return;
+    let ok = false;
     try {
-      await navigator.clipboard.writeText(link);
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(link);
+        ok = true;
+      }
+    } catch {
+      /* fall through */
+    }
+    if (!ok) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = link;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch {
+        ok = false;
+      }
+    }
+    if (ok) {
       setCopyState("copied");
       window.setTimeout(() => setCopyState("idle"), 1200);
-    } catch {
+    } else {
       setError("Couldn't copy. Select and copy manually.");
     }
   }

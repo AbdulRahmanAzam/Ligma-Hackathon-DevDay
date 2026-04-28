@@ -1,21 +1,8 @@
 import { useState } from "react";
 import "./auth-screens.css";
-import { persistSession, quickLogin, signIn, signUp } from "./auth-api";
+import { persistSession, signIn, signUp } from "./auth-api";
 
-interface Seeded {
-  user_id: string;
-  display: string;
-  role: "Lead" | "Contributor" | "Viewer";
-  color: string;
-}
-
-const SEEDED: Seeded[] = [
-  { user_id: "u_alice", display: "Alice", role: "Lead", color: "#0ea5e9" },
-  { user_id: "u_bob", display: "Bob", role: "Contributor", color: "#f97316" },
-  { user_id: "u_carol", display: "Carol", role: "Viewer", color: "#22c55e" },
-];
-
-type Tab = "quick" | "signin" | "signup";
+type Tab = "signin" | "signup";
 
 interface Props {
   onAuth: () => void;
@@ -23,40 +10,14 @@ interface Props {
   inviteRoomName?: string;
 }
 
-export function Login({ onAuth, defaultTab = "quick", inviteRoomName }: Props) {
+export function Login({ onAuth, defaultTab = "signin", inviteRoomName }: Props) {
   const [tab, setTab] = useState<Tab>(defaultTab);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Sign-in / sign-up state
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [display, setDisplay] = useState("");
-
-  async function quickAs(s: Seeded) {
-    setBusy(true);
-    setError(null);
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const room_id = params.get("room") || "ligma-devday-main";
-      const data = await quickLogin(s.user_id, room_id);
-      persistSession(
-        data.token,
-        {
-          user_id: data.user_id,
-          email: data.email,
-          display: data.display,
-          role: data.role,
-        },
-        s.color,
-      );
-      onAuth();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function doSignIn() {
     if (!email || !password) return;
@@ -98,14 +59,11 @@ export function Login({ onAuth, defaultTab = "quick", inviteRoomName }: Props) {
         <h1 className="ligma-h1">LIGMA</h1>
         <div className="ligma-mute" style={{ marginBottom: 16 }}>
           {inviteRoomName
-            ? `Sign in to join "${inviteRoomName}".`
+            ? `Sign in or create an account to join "${inviteRoomName}".`
             : "Sign in or create an account to start."}
         </div>
 
         <div className="tabs">
-          <button className={`tab ${tab === "quick" ? "active" : ""}`} onClick={() => setTab("quick")}>
-            Quick
-          </button>
           <button className={`tab ${tab === "signin" ? "active" : ""}`} onClick={() => setTab("signin")}>
             Sign in
           </button>
@@ -113,31 +71,6 @@ export function Login({ onAuth, defaultTab = "quick", inviteRoomName }: Props) {
             Sign up
           </button>
         </div>
-
-        {tab === "quick" && (
-          <div>
-            <div className="ligma-mute" style={{ marginBottom: 10 }}>
-              Demo accounts (each gets a real JWT):
-            </div>
-            {SEEDED.map((s) => (
-              <button
-                key={s.user_id}
-                disabled={busy}
-                onClick={() => quickAs(s)}
-                className="ligma-btn"
-                style={{
-                  width: "100%",
-                  textAlign: "left",
-                  marginBottom: 8,
-                  borderColor: s.role === "Lead" ? "#6366f1" : "#243149",
-                }}
-              >
-                <strong style={{ color: s.color }}>{s.display}</strong>
-                <span style={{ color: "#94a3b8", marginLeft: 8 }}>· {s.role}</span>
-              </button>
-            ))}
-          </div>
-        )}
 
         {tab === "signin" && (
           <div>
@@ -207,10 +140,6 @@ export function Login({ onAuth, defaultTab = "quick", inviteRoomName }: Props) {
         )}
 
         {error && <div className="error-pill">{error}</div>}
-
-        <div className="ligma-mute" style={{ fontSize: 11, marginTop: 14 }}>
-          Multi-user demo: open a second tab, switch accounts there.
-        </div>
       </div>
     </div>
   );

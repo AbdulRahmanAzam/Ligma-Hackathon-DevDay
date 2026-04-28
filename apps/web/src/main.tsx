@@ -114,7 +114,7 @@ function Root() {
     return (
       <Login
         onAuth={() => setAuthed(true)}
-        defaultTab={view.kind === "invite-pending" ? "signup" : "quick"}
+        defaultTab={view.kind === "invite-pending" ? "signup" : "signin"}
         inviteRoomName={inviteRoomName}
       />
     );
@@ -137,9 +137,11 @@ function Root() {
   }
 
   if (view.kind === "room") {
-    // App reads roomId from the URL, so making sure URL is current.
+    // Force a fresh App mount per-room so its useState(readSearchRoomId)
+    // re-reads the URL and roomId tracks the actual current room.
     return (
       <App
+        key={view.room_id}
         onBackToHome={() => {
           setRoomInUrl(null);
           setView({ kind: "home" });

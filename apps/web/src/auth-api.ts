@@ -89,19 +89,6 @@ async function jsonFetch<T>(
 
 // --- auth ---
 
-export async function quickLogin(user_id: string, room_id?: string): Promise<{
-  token: string;
-  user_id: string;
-  display: string;
-  email: string;
-  role: SessionUser["role"];
-}> {
-  return jsonFetch("/api/auth/dev-token", {
-    method: "POST",
-    body: JSON.stringify({ user_id, room_id }),
-  });
-}
-
 export async function signIn(
   email: string,
   password: string,

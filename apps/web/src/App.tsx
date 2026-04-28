@@ -553,6 +553,33 @@ function App({ onBackToHome, roomError, clearRoomError }: AppProps = {}) {
   const [userName, setUserName] = useState(() => getStoredValue('ligma.userName', 'DevDay Lead'))
   const [userColor, setUserColor] = useState(() => getStoredValue('ligma.userColor', USER_COLORS[0]))
   const [userRole, setUserRole] = useState<UserRole>(readStoredRole)
+  // Fetch the actual role for THIS specific room so the Invite button etc.
+  // reflect per-room membership rather than the role baked into the JWT.
+  useEffect(() => {
+    let cancelled = false
+    const userId = window.localStorage.getItem('ligma.userId')
+    const token = window.localStorage.getItem('ligma.token')
+    if (!userId || !token) return
+    fetch(`/api/rooms/${encodeURIComponent(roomId)}`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return
+        const members = (data as { members?: Array<{ user_id: string; role: UserRole }> }).members ?? []
+        const me = members.find((m) => m.user_id === userId)
+        if (me) {
+          setUserRole(me.role)
+          window.localStorage.setItem('ligma.userRole', me.role)
+        }
+      })
+      .catch(() => {
+        /* ignore — fall back to stored role */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [roomId])
   const [editor, setEditor] = useState<Editor | null>(null)
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting')
   const [events, setEvents] = useState<CanvasEvent[]>([])
@@ -1112,9 +1139,36 @@ function App({ onBackToHome, roomError, clearRoomError }: AppProps = {}) {
   }, [roomInput, taskArray, taskDoc])
 
   const copyRoomLink = useCallback(async () => {
-    await navigator.clipboard.writeText(window.location.href)
-    setShareLabel('Copied')
-    window.setTimeout(() => setShareLabel('Copy room link'), 1200)
+    const text = window.location.href
+    let ok = false
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text)
+        ok = true
+      }
+    } catch {
+      /* fall through to legacy path */
+    }
+    if (!ok) {
+      // Legacy fallback for plain-HTTP / older Safari: a transient textarea
+      // + document.execCommand('copy'). Required because Clipboard API only
+      // works in secure contexts.
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        ta.style.left = '-9999px'
+        document.body.appendChild(ta)
+        ta.select()
+        ok = document.execCommand('copy')
+        document.body.removeChild(ta)
+      } catch {
+        ok = false
+      }
+    }
+    setShareLabel(ok ? 'Copied' : 'Copy failed — select URL manually')
+    window.setTimeout(() => setShareLabel('Copy room link'), ok ? 1200 : 2400)
   }, [])
 
   const setTool = useCallback(
