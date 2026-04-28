@@ -1,0 +1,21 @@
+{
+  "name": "ligma",
+  "version": "1.0.0",
+  "private": true,
+  "description": "LIGMA — real-time collaborative ideation surface (DevDay'26 Hackathon, spec rebuild)",
+  "scripts": {
+    "dev": "pnpm -r --parallel --stream dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "seed": "pnpm --filter @ligma/server seed",
+    "server": "pnpm --filter @ligma/server dev",
+    "web": "pnpm --filter @ligma/web dev"
+  },
+  "devDependencies": {
+    "typescript": "5.6.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.33.0"
+}

@@ -1,0 +1,34 @@
+{
+  "name": "@ligma/server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "seed": "tsx src/scripts/seed-demo-room.ts",
+    "lint": "echo skip"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.1",
+    "@fastify/static": "^8.0.4",
+    "@ligma/shared": "workspace:*",
+    "argon2": "^0.41.1",
+    "better-sqlite3": "^11.5.0",
+    "fastify": "^5.0.0",
+    "jose": "^5.9.6",
+    "uuid": "^11.0.3",
+    "ws": "^8.18.0",
+    "yjs": "^13.6.20"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.9.0",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "5.6.3"
+  }
+}
