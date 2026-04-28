@@ -1,14 +1,11 @@
 import Database, { type Database as BetterDB } from "better-sqlite3";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdirSync } from "node:fs";
-import { RBAC_MATRIX, ROLES } from "@ligma/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const DEFAULT_PATH = process.env.SQLITE_PATH ?? join(process.cwd(), "data", "ligma.db");
-
 mkdirSync(dirname(DEFAULT_PATH), { recursive: true });
 
 export const db: BetterDB = new Database(DEFAULT_PATH);
@@ -19,17 +16,5 @@ db.pragma("foreign_keys = ON");
 const schemaPath = join(__dirname, "schema.sql");
 const schema = readFileSync(schemaPath, "utf8");
 db.exec(schema);
-
-// Seed the rbac_role_ops table from the shared matrix. Idempotent.
-const seedMatrix = db.transaction(() => {
-  db.prepare("DELETE FROM rbac_role_ops").run();
-  const ins = db.prepare("INSERT INTO rbac_role_ops (role, kind) VALUES (?, ?)");
-  for (const role of ROLES) {
-    for (const kind of RBAC_MATRIX[role]) {
-      ins.run(role, kind);
-    }
-  }
-});
-seedMatrix();
 
 export type DB = BetterDB;

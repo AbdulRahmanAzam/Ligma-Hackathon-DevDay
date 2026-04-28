@@ -9,8 +9,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": SERVER,
-      "/ws": { target: SERVER.replace("http", "ws"), ws: true },
+      "/ligma-sync": { target: SERVER.replace("http", "ws"), ws: true },
       "/healthz": SERVER,
+      "/health": SERVER,
     },
   },
   optimizeDeps: {

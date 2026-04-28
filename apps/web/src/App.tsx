@@ -220,10 +220,22 @@ function getColorIndex(color: string) {
 
 function getSyncUrl() {
   const configuredUrl = import.meta.env.VITE_LIGMA_SYNC_URL as string | undefined
-  if (configuredUrl) return configuredUrl
+  if (configuredUrl) {
+    return appendToken(configuredUrl)
+  }
 
+  // Default: same-origin /ligma-sync (Vite proxies it in dev; Fastify serves
+  // it in prod). The JWT is appended as ?token=... per our gateway contract.
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  return `${protocol}://${window.location.hostname}:8787/ligma-sync`
+  const url = `${protocol}://${window.location.host}/ligma-sync`
+  return appendToken(url)
+}
+
+function appendToken(url: string): string {
+  const token = window.localStorage.getItem('ligma.token')
+  if (!token) return url
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}token=${encodeURIComponent(token)}`
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

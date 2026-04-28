@@ -1,43 +1,36 @@
 import type { Server } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
+import * as Y from "yjs";
 import { v4 as uuid } from "uuid";
-import {
-  type WsClientToServer,
-  type WsServerToClient,
-  type Role,
-  EventKind,
-} from "@ligma/shared";
 import { verifyToken } from "../api/auth.js";
-import { effectiveRole, invalidateUser } from "../rbac/role-cache.js";
-import { authorize } from "../rbac/authorize.js";
-import { append, fetchSince, maxLamport, maxSeq } from "../events/writer.js";
-import { maybeSnapshot } from "../events/snapshot.js";
-import { recordDenial } from "../api/hud.js";
-import { project as projectNodes } from "../projections/nodes-index.js";
-import { project as projectTasks } from "../projections/task-board.js";
+import { getRoleInRoom } from "../api/auth.js";
 import {
+  activeUserList,
   broadcast,
-  broadcastEvent,
-  join,
-  leave,
+  getEventsSince,
+  getRoom,
+  getShapesSnapshot,
+  joinRoom,
+  leaveRoom,
+  persistTaskDoc,
+  send,
   type ClientSession,
-} from "../room/room-registry.js";
+} from "../room/registry.js";
+import { validateAndApplyDelta } from "../room/delta.js";
+import type { Role, WsClientMsg } from "../room/types.js";
 
-const RATE_LIMIT_OPS_PER_SEC = 200;
-const HIGHWATER_BYTES = 4 * 1024 * 1024;
-
-export function attachWs(httpServer: Server): void {
+export function attachWs(httpServer: Server, path = "/ligma-sync"): void {
   const wss = new WebSocketServer({ noServer: true });
 
   httpServer.on("upgrade", async (req, socket, head) => {
     const url = new URL(req.url ?? "/", "http://localhost");
-    if (url.pathname !== "/ws") {
+    if (url.pathname !== path) {
       socket.destroy();
       return;
     }
-    const room = url.searchParams.get("room");
     const token = url.searchParams.get("token");
-    if (!room || !token) {
+    if (!token) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
       return;
     }
@@ -49,211 +42,180 @@ export function attachWs(httpServer: Server): void {
     }
 
     wss.handleUpgrade(req, socket, head, (ws) => {
-      onConnection(ws, room, claims.sub, claims.display, claims.email);
+      onConnection(ws, claims.sub, claims.display);
     });
   });
 }
 
-function send(ws: WebSocket, msg: WsServerToClient): void {
-  if (ws.readyState !== ws.OPEN) return;
-  ws.send(JSON.stringify(msg));
+function parse(raw: unknown): WsClientMsg | null {
+  try {
+    const v = JSON.parse(String(raw)) as Record<string, unknown>;
+    if (!v || typeof v.type !== "string") return null;
+    return v as unknown as WsClientMsg;
+  } catch {
+    return null;
+  }
 }
 
-function onConnection(
-  ws: WebSocket,
-  roomId: string,
-  userId: string,
-  display: string,
-  email: string,
-): void {
-  const role = effectiveRole(userId, roomId, null) ?? "viewer";
+function sanitizeRole(v: unknown): Role {
+  return v === "Lead" || v === "Contributor" || v === "Viewer" ? v : "Viewer";
+}
 
-  const session: ClientSession = {
-    user_id: userId,
-    display,
-    email,
-    role: role as Role,
-    room_id: roomId,
-    ws,
-    last_applied_seq: 0,
-    out_queue_bytes: 0,
-  };
-
-  let helloDone = false;
-  const opTimestamps: number[] = [];
+function onConnection(ws: WebSocket, userId: string, displayName: string): void {
+  let roomId = "";
+  let session: ClientSession | null = null;
   let aliveTimer: NodeJS.Timeout | null = null;
 
-  const heartbeat = () => {
+  // 25s WS-level keepalive.
+  aliveTimer = setInterval(() => {
     if (ws.readyState !== ws.OPEN) return;
     try {
       ws.ping();
     } catch {
       /* ignore */
     }
-  };
-  aliveTimer = setInterval(heartbeat, 25_000);
+  }, 25_000);
 
   ws.on("message", (raw) => {
-    let msg: WsClientToServer;
-    try {
-      msg = JSON.parse(String(raw)) as WsClientToServer;
-    } catch {
-      return;
-    }
+    const msg = parse(raw);
+    if (!msg) return;
 
-    if (msg.t === "ping") {
-      send(ws, { t: "pong" });
-      return;
-    }
+    if (msg.type === "hello") {
+      // The client claims a role in `hello`, but we trust *our* server-side
+      // assignment from room_members / default_role. The client's role string
+      // is informational only.
+      roomId = String(msg.roomId || "ligma-devday-main");
+      const serverRole = getRoleInRoom(userId, roomId) ?? "Viewer";
+      const clientRole = sanitizeRole(msg.role);
 
-    if (msg.t === "hello") {
-      if (helloDone) return;
-      helloDone = true;
-      session.last_applied_seq = msg.last_applied_seq;
+      session = {
+        user_id: userId,
+        sessionId: msg.sessionId || uuid(),
+        name: msg.name?.slice(0, 80) || displayName || "Anonymous",
+        color: msg.color || "#0ea5e9",
+        // Use whichever is *more restrictive* between server-assigned and
+        // client-claimed. In practice this means: client can self-demote
+        // (e.g. "view-as Viewer") but cannot self-elevate.
+        role: roleMin(serverRole, clientRole),
+        socket: ws,
+      };
+
+      const room = joinRoom(roomId, session);
 
       send(ws, {
-        t: "hello_ok",
-        room: roomId,
-        user_id: userId,
-        role: session.role,
-        lamport_max: maxLamport(roomId),
-        seq_max: maxSeq(roomId),
+        type: "sync-welcome",
+        roomId,
+        serverTime: Date.now(),
+        senderSessionId: "server",
+        shapes: getShapesSnapshot(roomId),
+        events: getEventsSince(roomId, Number(msg.lastEventSeq ?? 0)),
+        taskUpdate: Array.from(Y.encodeStateAsUpdate(room.taskDoc)),
+        users: activeUserList(roomId),
       });
 
-      // Replay any missed events.
-      const missed = fetchSince(roomId, msg.last_applied_seq);
-      if (missed.length > 0) {
-        send(ws, { t: "snapshot_response", upto: maxSeq(roomId), tail: missed });
-      }
-
-      join(session);
-      return;
-    }
-
-    if (!helloDone) return;
-
-    if (msg.t === "presence") {
       broadcast(
         roomId,
         {
-          t: "presence",
-          user_id: userId,
-          cursor: msg.cursor,
-          selection: msg.selection,
-          viewport: msg.viewport,
+          type: "presence-user",
+          phase: "join",
+          sessionId: session.sessionId,
+          name: session.name,
+          color: session.color,
+          role: session.role,
         },
-        session,
+        session.sessionId,
       );
       return;
     }
 
-    if (msg.t === "snapshot_request") {
-      const tail = fetchSince(roomId, msg.since);
-      send(ws, { t: "snapshot_response", upto: maxSeq(roomId), tail });
+    if (!session) return;
+
+    if (msg.type === "canvas-delta") {
+      const { acceptedDelta, events, rejected } = validateAndApplyDelta(
+        roomId,
+        { name: session.name, role: session.role },
+        msg.delta,
+      );
+
+      if (events.length > 0) {
+        broadcast(roomId, {
+          type: "canvas-delta",
+          roomId,
+          senderSessionId: session.sessionId,
+          delta: acceptedDelta,
+          events,
+        });
+      }
+      if (rejected.length > 0) {
+        send(ws, { type: "mutation-rejected", roomId, rejected });
+      }
       return;
     }
 
-    if (msg.t === "op") {
-      const now = Date.now();
-      // Rate limit: 200 ops/sec, sliding 1s window.
-      while (opTimestamps.length > 0 && opTimestamps[0]! < now - 1000) {
-        opTimestamps.shift();
-      }
-      if (opTimestamps.length >= RATE_LIMIT_OPS_PER_SEC) {
-        send(ws, { t: "rate_limited", ref_id: msg.id });
+    if (msg.type === "presence-cursor") {
+      broadcast(
+        roomId,
+        {
+          type: "presence-cursor",
+          sessionId: session.sessionId,
+          name: session.name,
+          color: session.color,
+          role: session.role,
+          x: Number(msg.x) || 0,
+          y: Number(msg.y) || 0,
+        },
+        session.sessionId,
+      );
+      return;
+    }
+
+    if (msg.type === "yjs-update" && Array.isArray(msg.update)) {
+      const room = getRoom(roomId);
+      if (!room) return;
+      try {
+        Y.applyUpdate(room.taskDoc, Uint8Array.from(msg.update), session.sessionId);
+        // Persist on every update — small cost, and keeps the doc safe across
+        // restarts. For higher traffic we'd debounce; MVP is fine.
+        persistTaskDoc(roomId, room.taskDoc);
+      } catch (err) {
+        console.warn(`[ws] bad yjs update from ${session.sessionId}:`, err);
         return;
       }
-      opTimestamps.push(now);
-
-      // Ring 2 RBAC.
-      const auth = authorize(userId, roomId, msg.node_id, msg.kind);
-      if (!auth.ok) {
-        recordDenial(roomId, userId, msg.kind, auth.reason);
-        send(ws, {
-          t: "rbac_denied",
-          ref_id: msg.id,
-          reason: auth.reason,
-          kind: msg.kind,
-        });
-        return;
-      }
-
-      const result = append({
-        room_id: roomId,
-        actor_id: userId,
-        node_id: msg.node_id,
-        kind: msg.kind,
-        payload: msg.payload,
-        client_lamport: msg.lamport,
-        client_ts: msg.client_ts,
-        causation_id: msg.causation_id ?? null,
-        client_msg_id: msg.id,
-      });
-
-      if (!result.ok) {
-        // Ring 3 (SQL trigger) rejected it, or insert failed.
-        recordDenial(roomId, userId, msg.kind, result.reason);
-        send(ws, {
-          t: "rbac_denied",
-          ref_id: msg.id,
-          reason: result.reason,
-          kind: msg.kind,
-        });
-        return;
-      }
-
-      // Drive projections in-process. Order: nodes-index first (RBAC-relevant),
-      // then task board (visible to clients).
-      projectNodes(result.event);
-      projectTasks(result.event);
-
-      // Cache invalidation: any permission change purges role-cache for the user.
-      if (
-        msg.kind === EventKind.PERMISSION_GRANTED ||
-        msg.kind === EventKind.PERMISSION_REVOKED
-      ) {
-        const p = msg.payload as { user_id?: string };
-        if (p?.user_id) {
-          invalidateUser(p.user_id);
-          broadcast(roomId, {
-            t: "role_changed",
-            user_id: p.user_id,
-            node_id: msg.node_id,
-            new_role:
-              msg.kind === EventKind.PERMISSION_GRANTED
-                ? ((msg.payload as { role: Role }).role as Role)
-                : ("viewer" as Role),
-            seq: result.event.seq,
-          });
-        }
-      }
-
-      // Ack the originator with seq + lamport.
-      send(ws, {
-        t: "ack",
-        ref_id: msg.id,
-        seq: result.event.seq,
-        lamport: result.event.lamport,
-      });
-
-      // Broadcast to everyone (including originator — convenient for HUD).
-      broadcastEvent(roomId, result.event);
-
-      maybeSnapshot(roomId);
+      broadcast(
+        roomId,
+        {
+          type: "yjs-update",
+          roomId,
+          senderSessionId: session.sessionId,
+          update: msg.update,
+        },
+        session.sessionId,
+      );
+      return;
     }
   });
 
   ws.on("close", () => {
     if (aliveTimer) clearInterval(aliveTimer);
-    leave(session);
+    if (session) {
+      const sid = session.sessionId;
+      leaveRoom(roomId, sid);
+      broadcast(roomId, { type: "presence-user", phase: "leave", sessionId: sid });
+    }
   });
 
   ws.on("error", () => {
     if (aliveTimer) clearInterval(aliveTimer);
-    leave(session);
+    if (session) {
+      const sid = session.sessionId;
+      leaveRoom(roomId, sid);
+      broadcast(roomId, { type: "presence-user", phase: "leave", sessionId: sid });
+    }
   });
 }
 
-// Suppress unused-import warning under noUnusedParameters.
-void HIGHWATER_BYTES;
-void uuid;
+function roleMin(a: Role, b: Role): Role {
+  // Lead > Contributor > Viewer (in privilege).
+  const rank = { Lead: 3, Contributor: 2, Viewer: 1 };
+  return rank[a] < rank[b] ? a : b;
+}
