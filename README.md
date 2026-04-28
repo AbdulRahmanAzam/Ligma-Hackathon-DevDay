@@ -1,64 +1,59 @@
-# Ligma — Real-time Ideation → Execution
+# LIGMA — Real-time Ideation → Execution
 
-DevDay Hackathon 2026. Four developers, one repo.
+DevDay '26 Hackathon submission. A live whiteboard that turns brainstorms
+into tracked tasks, with role-aware permissions and shareable invite links.
+
+## What's in here
 
 ```
-DevDay Hackathon 2026/
-├─ frontend/   ← React + Vite + tldraw v3 canvas client (DONE)
-├─ backend/    ← Production WebSocket + persistence (TODO — see backend/INTEGRATION.md)
-├─ AI/         ← Intent classification service (TODO — see AI/INTEGRATION.md)
-└─ rbac/       ← Auth + node-level access control (TODO — see rbac/INTEGRATION.md)
+ligma-hackathon/
+├─ apps/
+│   ├─ web/        React 19 + Vite + tldraw v3 canvas client
+│   └─ server/     Fastify + ws + better-sqlite3 backend (auth, rooms, sync)
+└─ packages/
+    └─ shared/     Shared types between client and server
 ```
 
-## Run the canvas locally
+A single Node process serves the static SPA, the REST API (`/api/*`), and
+the WebSocket sync (`/ligma-sync`). SQLite handles persistence.
 
-```powershell
-cd frontend
-npm install
-npm run dev    # starts custom WebSocket sync server (8787) + Vite (5173/5174)
+## Run it locally
+
+Requires **Node 20+** and **pnpm**.
+
+```bash
+pnpm install
+pnpm dev
 ```
 
-Open two tabs at `http://localhost:5173/?room=demo` to verify two-tab sync.
+- Client: http://localhost:5173 (Vite, proxies `/api` and `/ligma-sync` → server)
+- Server: http://localhost:8090
 
-Health check: `curl http://localhost:8787/health`.
+Sign up with any email + password, create a whiteboard, invite collaborators.
 
-## What the frontend ships
+### Windows note
 
-All 11 frontend cards are implemented and verified. See `frontend/integration.json` for the per-card status and file map.
+`better-sqlite3` and `argon2` need a C++ toolchain. Install Visual Studio
+Build Tools (Desktop development with C++) once, then `pnpm install`.
 
-- Custom WebSocket protocol (no `@tldraw/sync`, no `y-websocket`).
-- Tldraw v3 canvas with shape deltas, sticky notes, draw, geo, text.
-- Live cursor presence in **tldraw page coordinates** (correct under pan/zoom).
-- Yjs-backed task board projection linked back to source canvas nodes.
-- Animated intent badges anchored to the live shape bounds.
-- Node-level RBAC with client UI affordances **and** server enforcement.
-- Append-only event log with `seq`-based reconnect replay.
-- Time-travel replay scrubber that keeps incoming live deltas correctly buffered.
-- Onboarding tour and 1280–1920 px responsive layout.
+## Roles
 
-## Per-team handoff
+- **Lead** — room creator. Can invite, revoke links, remove members, lock
+  shapes to a role tier.
+- **Contributor** — can draw, type, move shapes. Sign-in required.
+- **Viewer** — read-only. Anonymous Viewer invites skip the login screen
+  entirely (browser → live canvas).
 
-| Team | Doc | Status |
-|---|---|---|
-| Frontend / Canvas | `frontend/integration.json`, `frontend/README.md` | ✅ Done |
-| Backend (persistence + scaling) | `backend/INTEGRATION.md` | ⏳ Spec written, implementation pending |
-| AI (intent classification) | `AI/INTEGRATION.md` | ⏳ Spec written, service pending |
-| RBAC (auth + ACL enforcement) | `rbac/INTEGRATION.md` | ⏳ Spec written, server-side enforcement is a hackathon must-have |
+## Deploy
 
-## Hackathon non-negotiables
+The hackathon instance runs on a single VPS (Node + systemd + SQLite WAL).
+Build the workspace and copy `apps/web/dist` and `apps/server/dist` to the
+target host; `apps/server/dist/db/schema.sql` must travel with the JS.
 
-1. **Custom WebSockets only.** No prebuilt sync libs.
-2. **Server-side RBAC.** Judges will send raw `ws` frames. Client guards earn zero.
-3. **Append-only event log.** Every mutation gets a monotonic `seq`.
-4. **Reconnect replays only missed events** via `lastEventSeq` in `hello`.
-5. **CRDT for canvas state.** Tldraw's built-in CRDT + a Yjs `Y.Array` for tasks.
-
-## One-line verification
-
-```powershell
-# Two-tab sync
-start http://localhost:5173/?room=verify ; start http://localhost:5173/?room=verify
-
-# RBAC raw-WS smoke (run from frontend/)
-node ./scripts/rbac-smoke.mjs   # see rbac/INTEGRATION.md §7 for the script body
+```bash
+pnpm -r build
 ```
+
+## Hackathon brief
+
+See `Hackathon Task.txt` for the original problem statement.
