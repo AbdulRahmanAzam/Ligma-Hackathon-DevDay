@@ -20,14 +20,18 @@ import {
 import * as Y from 'yjs'
 import {
   Activity,
+  BarChart3,
   BrainCircuit,
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
   Circle,
+  Clock,
   ClipboardList,
   Copy,
+  Crown,
   Diamond,
   Download,
   Eye,
@@ -41,6 +45,7 @@ import {
   MousePointer2,
   Pause,
   PenLine,
+  Pencil,
   Play,
   ShieldAlert,
   Share2,
@@ -54,12 +59,13 @@ import {
   Wifi,
   WifiOff,
   X,
+  Zap,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import 'tldraw/tldraw.css'
 import './App.css'
 import { InviteModal } from './InviteModal'
-import { requestAiSummary } from './auth-api'
+import { resolveApiUrl } from './auth-api'
 import {
   classifyIntentAI,
   classifyIntentRegex,
@@ -70,9 +76,15 @@ import {
 } from './ai-intent'
 import {
   buildSummaryData,
+  buildPremiumHTML,
+  captureCanvasSnapshot,
   copyToClipboard,
   downloadMarkdown,
+  fetchLLMSummary,
   formatSummaryMarkdown,
+  markdownToHTML,
+  openPDFReport,
+  type SummaryData,
 } from './ai-summary'
 
 type UserRole = 'Lead' | 'Contributor' | 'Viewer'
@@ -655,7 +667,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
     const userId = window.localStorage.getItem('ligma.userId')
     const token = window.localStorage.getItem('ligma.token')
     if (!userId || !token) return
-    fetch(`/api/rooms/${encodeURIComponent(roomId)}`, {
+    fetch(resolveApiUrl(`/api/rooms/${encodeURIComponent(roomId)}`), {
       headers: { authorization: `Bearer ${token}` },
     })
       .then((r) => (r.ok ? r.json() : null))
@@ -700,6 +712,8 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false)
   const [isEditBarVisible, setIsEditBarVisible] = useState(true)
   const [highlightedNodeId, setHighlightedNodeId] = useState<TLShapeId | null>(null)
+  const [showPresenceModal, setShowPresenceModal] = useState(false)
+  const [showEventLogModal, setShowEventLogModal] = useState(false)
   const [onboardingStep, setOnboardingStep] = useState(() =>
     window.localStorage.getItem('ligma.onboardingComplete') === 'true' ? onboardingSteps.length : 0,
   )
@@ -711,6 +725,9 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   const [aiModelStatus, setAiModelStatus] = useState<'loading' | 'ready' | 'failed'>('loading')
   const [aiModelProgress, setAiModelProgress] = useState(0)
   const [summaryContent, setSummaryContent] = useState('')
+  const [summaryData, setSummaryData] = useState<SummaryData | null>(null)
+  const [summaryLLMSource, setSummaryLLMSource] = useState(false)
+  const [summarySnapshot, setSummarySnapshot] = useState<string | null>(null)
   const [showSummaryModal, setShowSummaryModal] = useState(false)
   const [summaryGenerating, setSummaryGenerating] = useState(false)
   const canvasStageRef = useRef<HTMLDivElement | null>(null)
@@ -1478,6 +1495,11 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
 
   const applyRoomChange = useCallback(() => {
     const nextRoomId = normalizeRoomId(roomInput)
+    // If the room ID hasn't changed, just copy the link instead of reconnecting
+    if (nextRoomId === roomId) {
+      copyRoomLink()
+      return
+    }
     setRoomId(nextRoomId)
     setRoomInput(nextRoomId)
     setEditor(null)
@@ -1500,7 +1522,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
     lastEventSeqRef.current = 0
     clearIntentCache()
     aiCacheRef.current = new Map()
-  }, [roomInput, taskArray, taskDoc])
+  }, [roomInput, roomId, copyRoomLink, taskArray, taskDoc])
 
   const copyRoomLink = useCallback(async () => {
     const text = window.location.href
@@ -1531,8 +1553,8 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
         ok = false
       }
     }
-    setShareLabel(ok ? 'Copied' : 'Copy failed — select URL manually')
-    window.setTimeout(() => setShareLabel('Copy room link'), ok ? 1200 : 2400)
+    setShareLabel(ok ? 'Copied!' : 'Copy failed')
+    window.setTimeout(() => setShareLabel('Copy room link'), ok ? 1600 : 2400)
   }, [])
 
   const generateAISummary = useCallback(async () => {
@@ -1570,19 +1592,29 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
         color: u.color,
       }))
 
-      const summaryData = buildSummaryData({ roomId, nodes: classifiedNodes, participants })
+      const data = buildSummaryData({ roomId, nodes: classifiedNodes, participants })
+      setSummaryData(data)
+
+      // Capture canvas snapshot in parallel with LLM call
+      const [snapshot, llmResult] = await Promise.all([
+        captureCanvasSnapshot(),
+        fetchLLMSummary(data),
+      ])
+      setSummarySnapshot(snapshot)
+
       let markdown = ''
-      try {
-        const response = await requestAiSummary(summaryData)
-        markdown = typeof response.markdown === 'string' && response.markdown.trim()
-          ? response.markdown
-          : ''
-      } catch (err) {
-        console.warn('[ai-summary] AI summary failed, using local formatter:', err)
+      let isLLM = false
+      if (llmResult.source === 'llm' && llmResult.summary) {
+        markdown = llmResult.summary
+        isLLM = true
+      } else {
+        if (llmResult.source === 'fallback') {
+          console.warn('[ai-summary] LLM unavailable, using local formatter:', llmResult.error)
+        }
+        markdown = formatSummaryMarkdown(data)
       }
-      if (!markdown) {
-        markdown = formatSummaryMarkdown(summaryData)
-      }
+
+      setSummaryLLMSource(isLLM)
       setSummaryContent(markdown)
       setShowSummaryModal(true)
     } catch (err) {
@@ -1847,8 +1879,8 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
             <button className="icon-button" type="button" title="Join room" onClick={applyRoomChange}>
               <Share2 size={17} aria-hidden="true" />
             </button>
-            <button className="ghost-button" type="button" title={shareLabel} onClick={copyRoomLink}>
-              <Copy size={16} aria-hidden="true" />
+            <button className="ghost-button copy-link-btn" type="button" title={shareLabel} onClick={copyRoomLink}>
+              {shareLabel === 'Copied!' ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
               <span>{shareLabel}</span>
             </button>
             {userRole === 'Lead' && (
@@ -2123,7 +2155,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
           <section className="panel-section panel-toggle-section">
             <button className="panel-toggle" type="button" onClick={() => setIsPanelCollapsed((isCollapsed) => !isCollapsed)}>
               {isPanelCollapsed ? <ChevronLeft size={16} aria-hidden="true" /> : <ChevronRight size={16} aria-hidden="true" />}
-              <span>{isPanelCollapsed ? `${tasks.length} tasks · ${events.length} events` : 'Collapse panel'}</span>
+              <span>{isPanelCollapsed ? `${tasks.length} tasks · ${events.length} events` : ''}</span>
             </button>
           </section>
 
@@ -2134,10 +2166,11 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
             <Metric icon={MessageSquareText} label="Questions" value={stats.questionCount} />
           </section>
 
-          <section className="panel-section presence-roster">
+          <section className="panel-section presence-roster presence-roster-clickable" onClick={() => setShowPresenceModal(true)} role="button" tabIndex={0} title="Click to view presence details">
             <div className="section-heading">
               <Users size={16} aria-hidden="true" />
               <h2>Room Presence</h2>
+              <span className="presence-count-badge">{activeUserList.length}</span>
             </div>
             <div className="avatar-stack">
               {activeUserList.map((user) => (
@@ -2236,7 +2269,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
           </section>
 
           <section className="panel-section event-log">
-            <div className="section-heading">
+            <div className="section-heading event-log-heading-clickable" onClick={() => setShowEventLogModal(true)} role="button" tabIndex={0} title="Click to view full event analytics">
               <Activity size={16} aria-hidden="true" />
               <h2>Event Log</h2>
               <span className="append-only-badge" title="Events are immutable — append-only">
@@ -2271,46 +2304,325 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
       {showInvite && (
         <InviteModal room_id={roomId} onClose={() => setShowInvite(false)} />
       )}
-      {showSummaryModal && (
+      {showSummaryModal && summaryData && (
         <div className="summary-modal-overlay" onClick={() => setShowSummaryModal(false)}>
           <div className="summary-modal" onClick={(e) => e.stopPropagation()}>
+            {/* Premium header — dark with gold accent */}
             <div className="summary-modal-header">
-              <div className="summary-modal-title">
-                <BrainCircuit size={20} aria-hidden="true" />
-                <h2>AI Summary Export</h2>
+              <div className="summary-header-left">
+                <div className="summary-logo-mark">L</div>
+                <div className="summary-title-block">
+                  <h2 className="summary-title-text">Brainstorm Summary</h2>
+                  <div className="summary-meta-row">
+                    <span>{summaryData.roomId}</span>
+                    <span className="summary-meta-dot">·</span>
+                    <span>{new Date(summaryData.generatedAt).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' })}</span>
+                    <span className="summary-meta-dot">·</span>
+                    <span>{summaryData.participants.length} participant{summaryData.participants.length !== 1 ? 's' : ''}</span>
+                    <span className="summary-meta-dot">·</span>
+                    <span>{summaryData.stats.totalNodes} nodes</span>
+                  </div>
+                </div>
               </div>
-              <button className="summary-modal-close" type="button" onClick={() => setShowSummaryModal(false)}>
-                <X size={16} aria-hidden="true" />
-              </button>
+              <div className="summary-header-right">
+                <span className={`summary-source-badge ${summaryLLMSource ? 'badge-ai' : 'badge-local'}`}>
+                  {summaryLLMSource ? '🧠 AI-Generated' : '⚙ Local'}
+                </span>
+                <button className="summary-modal-close" type="button" onClick={() => setShowSummaryModal(false)}>
+                  <X size={16} aria-hidden="true" />
+                </button>
+              </div>
             </div>
+
+            {/* Actions bar */}
             <div className="summary-modal-actions">
               <button
                 type="button"
-                className="summary-action-button"
+                id="summary-copy-btn"
+                className="summary-action-btn"
                 onClick={async () => {
                   const ok = await copyToClipboard(summaryContent)
-                  if (ok) {
-                    const btn = document.querySelector('.summary-action-button') as HTMLElement
-                    if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = ''; }, 1200) }
+                  const btn = document.getElementById('summary-copy-btn')
+                  if (btn && ok) {
+                    const orig = btn.innerHTML
+                    btn.textContent = 'Copied!'
+                    setTimeout(() => { btn.innerHTML = orig }, 1500)
                   }
                 }}
               >
-                <Copy size={15} aria-hidden="true" />
-                <span>Copy to clipboard</span>
+                <Copy size={14} aria-hidden="true" />
+                <span>Copy</span>
               </button>
               <button
                 type="button"
-                className="summary-action-button"
+                className="summary-action-btn"
                 onClick={() => downloadMarkdown(summaryContent, `ligma-summary-${roomId}.md`)}
               >
-                <Download size={15} aria-hidden="true" />
-                <span>Download .md</span>
+                <Download size={14} aria-hidden="true" />
+                <span>Markdown</span>
+              </button>
+              <div className="summary-actions-spacer" />
+              <button
+                type="button"
+                className="summary-pdf-btn"
+                onClick={() => {
+                  const html = buildPremiumHTML(summaryContent, summaryData, summarySnapshot, summaryLLMSource)
+                  openPDFReport(html)
+                }}
+              >
+                <FileText size={14} aria-hidden="true" />
+                <span>Export PDF</span>
               </button>
             </div>
-            <pre className="summary-modal-content">{summaryContent}</pre>
+
+            {/* Content area — cream background with rendered markdown */}
+            <div className="summary-modal-content">
+              <div
+                className="summary-rendered-body"
+                dangerouslySetInnerHTML={{ __html: markdownToHTML(summaryContent) }}
+              />
+              {summarySnapshot && (
+                <div className="summary-snapshot-section">
+                  <h3 className="summary-snapshot-title">📸 Canvas Snapshot</h3>
+                  <img
+                    className="summary-snapshot-img"
+                    src={summarySnapshot}
+                    alt="Canvas snapshot at time of export"
+                  />
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
+      {/* ── Room Presence Detail Modal ── */}
+      {showPresenceModal && (
+        <div className="detail-modal-overlay" onClick={() => setShowPresenceModal(false)}>
+          <motion.div
+            className="detail-modal"
+            initial={{ opacity: 0, y: 20, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.97 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="detail-modal-header">
+              <div className="detail-modal-header-left">
+                <Users size={18} aria-hidden="true" />
+                <h2>Room Presence</h2>
+                <span className="detail-modal-count">{activeUserList.length} participant{activeUserList.length !== 1 ? 's' : ''}</span>
+              </div>
+              <button className="detail-modal-close" type="button" onClick={() => setShowPresenceModal(false)}>
+                <X size={16} aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="detail-modal-body">
+              {/* Summary stats row */}
+              <div className="presence-summary-row">
+                {(() => {
+                  const leads = activeUserList.filter(u => u.role === 'Lead').length
+                  const contributors = activeUserList.filter(u => u.role === 'Contributor').length
+                  const viewers = activeUserList.filter(u => u.role === 'Viewer').length
+                  return (
+                    <>
+                      <div className="presence-stat">
+                        <Crown size={14} aria-hidden="true" />
+                        <span className="presence-stat-value">{leads}</span>
+                        <span className="presence-stat-label">Lead{leads !== 1 ? 's' : ''}</span>
+                      </div>
+                      <div className="presence-stat">
+                        <Pencil size={14} aria-hidden="true" />
+                        <span className="presence-stat-value">{contributors}</span>
+                        <span className="presence-stat-label">Contributor{contributors !== 1 ? 's' : ''}</span>
+                      </div>
+                      <div className="presence-stat">
+                        <Eye size={14} aria-hidden="true" />
+                        <span className="presence-stat-value">{viewers}</span>
+                        <span className="presence-stat-label">Viewer{viewers !== 1 ? 's' : ''}</span>
+                      </div>
+                    </>
+                  )
+                })()}
+              </div>
+
+              {/* User detail cards */}
+              <div className="presence-user-list">
+                {activeUserList.length ? activeUserList.map((user) => {
+                  const userEvents = events.filter(ev => ev.authorName === user.name)
+                  const created = userEvents.filter(ev => ev.operation === 'created').length
+                  const updated = userEvents.filter(ev => ev.operation === 'updated').length
+                  const deleted = userEvents.filter(ev => ev.operation === 'deleted').length
+                  const totalActions = userEvents.length
+                  const roleIcon = user.role === 'Lead' ? Crown : user.role === 'Contributor' ? Pencil : Eye
+                  const RoleIcon = roleIcon
+                  return (
+                    <div className="presence-user-card" key={user.sessionId}>
+                      <div className="presence-user-top">
+                        <span className={`presence-user-avatar avatar-${getColorIndex(user.color)}`}>
+                          {user.name.slice(0, 1).toUpperCase()}
+                        </span>
+                        <div className="presence-user-info">
+                          <strong className="presence-user-name">{user.name}</strong>
+                          <div className="presence-user-role-row">
+                            <span className={`presence-role-chip ${user.role}`}>
+                              <RoleIcon size={11} aria-hidden="true" />
+                              {user.role}
+                            </span>
+                            <span className="presence-user-session">Session: {user.sessionId.slice(0, 8)}…</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="presence-user-actions">
+                        <div className="presence-action-stat">
+                          <Zap size={12} aria-hidden="true" />
+                          <span>{totalActions}</span>
+                          <small>Total</small>
+                        </div>
+                        <div className="presence-action-stat created">
+                          <span>{created}</span>
+                          <small>Created</small>
+                        </div>
+                        <div className="presence-action-stat updated">
+                          <span>{updated}</span>
+                          <small>Updated</small>
+                        </div>
+                        <div className="presence-action-stat deleted">
+                          <span>{deleted}</span>
+                          <small>Deleted</small>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                }) : (
+                  <p className="empty-state">No users currently in the room</p>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* ── Event Log Detail Modal ── */}
+      {showEventLogModal && (
+        <div className="detail-modal-overlay" onClick={() => setShowEventLogModal(false)}>
+          <motion.div
+            className="detail-modal detail-modal-wide"
+            initial={{ opacity: 0, y: 20, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.97 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="detail-modal-header">
+              <div className="detail-modal-header-left">
+                <Activity size={18} aria-hidden="true" />
+                <h2>Event Analytics</h2>
+                <span className="detail-modal-count">{events.length} event{events.length !== 1 ? 's' : ''}</span>
+              </div>
+              <button className="detail-modal-close" type="button" onClick={() => setShowEventLogModal(false)}>
+                <X size={16} aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="detail-modal-body">
+              {/* Event summary stats */}
+              <div className="event-summary-row">
+                {(() => {
+                  const createdCount = events.filter(ev => ev.operation === 'created').length
+                  const updatedCount = events.filter(ev => ev.operation === 'updated').length
+                  const deletedCount = events.filter(ev => ev.operation === 'deleted').length
+                  const uniqueAuthors = new Set(events.map(ev => ev.authorName)).size
+                  return (
+                    <>
+                      <div className="event-stat-card">
+                        <BarChart3 size={16} aria-hidden="true" />
+                        <span className="event-stat-value">{events.length}</span>
+                        <span className="event-stat-label">Total Events</span>
+                      </div>
+                      <div className="event-stat-card created">
+                        <span className="event-stat-value">{createdCount}</span>
+                        <span className="event-stat-label">Created</span>
+                      </div>
+                      <div className="event-stat-card updated">
+                        <span className="event-stat-value">{updatedCount}</span>
+                        <span className="event-stat-label">Updated</span>
+                      </div>
+                      <div className="event-stat-card deleted">
+                        <span className="event-stat-value">{deletedCount}</span>
+                        <span className="event-stat-label">Deleted</span>
+                      </div>
+                      <div className="event-stat-card">
+                        <Users size={14} aria-hidden="true" />
+                        <span className="event-stat-value">{uniqueAuthors}</span>
+                        <span className="event-stat-label">Contributors</span>
+                      </div>
+                    </>
+                  )
+                })()}
+              </div>
+
+              {/* Per-user breakdown */}
+              <h3 className="event-section-title">
+                <Users size={14} aria-hidden="true" />
+                Activity by User
+              </h3>
+              <div className="event-user-breakdown">
+                {(() => {
+                  const userMap = new Map<string, { events: CanvasEvent[], role: UserRole }>()
+                  for (const ev of events) {
+                    const existing = userMap.get(ev.authorName)
+                    if (existing) {
+                      existing.events.push(ev)
+                    } else {
+                      userMap.set(ev.authorName, { events: [ev], role: ev.authorRole })
+                    }
+                  }
+                  return Array.from(userMap.entries()).map(([authorName, { events: userEvents, role }]) => (
+                    <div className="event-user-row" key={authorName}>
+                      <div className="event-user-header">
+                        <span className={`presence-role-chip ${role}`}>
+                          {role === 'Lead' ? <Crown size={11} /> : role === 'Contributor' ? <Pencil size={11} /> : <Eye size={11} />}
+                          {role}
+                        </span>
+                        <strong>{authorName}</strong>
+                        <span className="event-user-total">{userEvents.length} action{userEvents.length !== 1 ? 's' : ''}</span>
+                      </div>
+                    </div>
+                  ))
+                })()}
+              </div>
+
+              {/* Full timeline */}
+              <h3 className="event-section-title">
+                <Clock size={14} aria-hidden="true" />
+                Full Timeline
+              </h3>
+              <div className="event-timeline-list">
+                {events.length ? events.map((event) => (
+                  <div className={`event-timeline-row ${event.operation}`} key={event.id}>
+                    <div className="event-timeline-time">
+                      <Clock size={11} aria-hidden="true" />
+                      {formatTime(event.at)}
+                    </div>
+                    <div className={`event-timeline-op ${event.operation}`}>{event.operation}</div>
+                    <div className="event-timeline-label">{event.label}</div>
+                    <div className="event-timeline-author">
+                      <span className={`presence-role-chip mini ${event.authorRole}`}>
+                        {event.authorRole}
+                      </span>
+                      {event.authorName}
+                    </div>
+                  </div>
+                )) : (
+                  <p className="empty-state">No events recorded yet</p>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
       {roomError && (
         <div
           style={{

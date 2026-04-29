@@ -35,6 +35,16 @@ const ROLE_DEFAULT_COLOR: Record<string, string> = {
   Viewer: "#22c55e",
 };
 
+const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "";
+
+export function resolveApiUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  if (!API_BASE) return url;
+  const base = API_BASE.replace(/\/+$/, "");
+  if (!url) return base;
+  return url.startsWith("/") ? `${base}${url}` : `${base}/${url}`;
+}
+
 export function persistSession(token: string, user: SessionUser, color?: string): void {
   const c = color ?? user.color ?? ROLE_DEFAULT_COLOR[user.role] ?? "#0ea5e9";
   window.localStorage.setItem("ligma.token", token);
@@ -76,7 +86,7 @@ async function jsonFetch<T>(
     const t = readToken();
     if (t) headers["authorization"] = `Bearer ${t}`;
   }
-  const r = await fetch(url, { ...opts, headers });
+  const r = await fetch(resolveApiUrl(url), { ...opts, headers });
   const ct = r.headers.get("content-type") ?? "";
   const body = ct.includes("application/json") ? await r.json() : await r.text();
   if (!r.ok) {

@@ -566,7 +566,7 @@ export function downloadMarkdown(text: string, filename: string): void {
 // ---------------------------------------------------------------------------
 // Markdown → HTML converter (simple, no dependencies)
 // ---------------------------------------------------------------------------
-function markdownToHTML(md: string): string {
+export function markdownToHTML(md: string): string {
   let html = escHTML(md)
 
   // Headers

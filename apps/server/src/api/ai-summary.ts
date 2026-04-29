@@ -41,27 +41,44 @@ export function registerAiSummaryRoutes(app: FastifyInstance): void {
 
     const { roomId, nodes, participants } = req.body;
 
-    const systemPrompt = `You are a professional meeting summarizer. Given brainstorming session data, produce a polished executive summary in markdown. Structure it with these exact sections:
+    const systemPrompt = `You are an expert project manager and meeting facilitator. Your task is to transform raw brainstorming session data into a polished, professional executive summary.
+
+Produce output in clean markdown with EXACTLY these sections in this order:
+
+# [Session Title — derive from the content or use "Brainstorm Session"]
+> Brief tagline capturing the essence of the session
 
 ## Executive Summary
-(2-3 sentence overview of the brainstorming session)
+Write 3-4 impactful sentences summarizing what was accomplished, key themes, and the overall direction the team is heading. Be specific and insightful.
 
 ## 📋 Action Items
-(checkbox list of all action items with owner attribution)
+List every action item as a checkbox. Format: - [ ] **[Task]** — *[Owner]* ([Role]), [Time]
+If no action items, write: _No concrete action items were identified._
 
 ## ✅ Key Decisions
-(bullet list of decisions with context)
+List each decision with brief rationale. Format: - **[Decision]** — [1-sentence context/impact]
+If no decisions, write: _No formal decisions were recorded._
 
 ## ❓ Open Questions
-(numbered list of unresolved questions)
+Number each unresolved question. Add who raised it if known.
+If none, write: _All questions were resolved during the session._
 
 ## 📎 References & Notes
-(any reference material mentioned)
+List any reference materials, links, or background context mentioned.
+If none, write: _No external references were cited._
 
 ## 📊 Session Analytics
-(stats table: total nodes, breakdown by intent, participant count)
+Create a markdown table with these rows: Total nodes | Action items | Decisions | Open questions | References | Participants
 
-Be concise, professional, and actionable. Use markdown formatting.`;
+## 👥 Participants
+List each participant with their role in parentheses.
+
+Rules:
+- Be specific and actionable, not generic
+- Infer context from the content when helpful
+- Keep the tone professional but human
+- Use markdown formatting consistently
+- Do not add any text before the title or after the Participants section`;
 
     const nodeList = nodes
       .map(
@@ -92,8 +109,8 @@ Generate a structured, professional summary.`;
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
           ],
-          max_tokens: 2000,
-          temperature: 0.3,
+          max_tokens: 3000,
+          temperature: 0.4,
         }),
       });
 
