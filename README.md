@@ -4,7 +4,7 @@ DevDay '26 Hackathon submission. A live whiteboard that turns brainstorms
 into tracked tasks, with role-aware permissions and shareable invite links.
 
 ## What's in here
-
+ 
 ```
 ligma-hackathon/
 ├─ apps/
