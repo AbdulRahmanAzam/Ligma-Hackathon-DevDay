@@ -51,15 +51,25 @@ export function Home({ onOpenRoom, onSignOut }: Props) {
     }
   }
 
+  const initial = user?.display?.trim().slice(0, 1).toUpperCase() ?? "?";
+
   return (
     <div className="ligma-shell">
       <div className="home-shell">
         <div className="home-header">
-          <h1 className="ligma-h1">LIGMA</h1>
+          <div className="brand-lockup" aria-label="Ligma">
+            <span className="brand-mark">L</span>
+            <div className="brand-text">
+              <h1>Ligma</h1>
+              <p>Live ideation to execution</p>
+            </div>
+          </div>
           <div className="who">
             {user && (
-              <span className="who-display">
-                {user.display} <span style={{ opacity: 0.6 }}>· {user.role}</span>
+              <span className="user-chip" title={`${user.display} · ${user.role}`}>
+                <span className="user-chip-avatar" aria-hidden="true">{initial}</span>
+                <span className="user-chip-name">{user.display}</span>
+                <span className={`role-pill ${user.role}`}>{user.role}</span>
               </span>
             )}
             <button className="ligma-btn ghost" onClick={signOut}>

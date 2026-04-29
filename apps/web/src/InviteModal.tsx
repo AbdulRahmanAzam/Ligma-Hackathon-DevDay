@@ -186,27 +186,18 @@ export function InviteModal({ room_id, onClose }: Props) {
             <h4 className="ligma-h2" style={{ margin: "20px 0 8px" }}>Active links</h4>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {invites.map((inv) => (
-                <div
-                  key={inv.token}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    border: "1px solid #e2e8f0",
-                    borderRadius: 8,
-                    padding: "8px 10px",
-                    background: "#f8fafc",
-                  }}
-                >
+                <div key={inv.token} className="member-row">
                   <span className={`role-pill ${inv.role}`}>{inv.role}</span>
-                  <span className="ligma-mute" style={{ fontSize: 11, fontFamily: 'ui-monospace, "Menlo", monospace' }}>
+                  <span className="ligma-mute" style={{ fontSize: 11, fontFamily: 'ui-monospace, "Cascadia Mono", "Menlo", monospace' }}>
                     …{inv.token.slice(-8)}
                   </span>
-                  <span className="ligma-mute" style={{ fontSize: 11, marginLeft: "auto" }}>
-                    {inv.redeemed_count} use{inv.redeemed_count === 1 ? "" : "s"}
+                  <span className="member-tag">
+                    <span className="ligma-mute" style={{ fontSize: 11 }}>
+                      {inv.redeemed_count} use{inv.redeemed_count === 1 ? "" : "s"}
+                    </span>
+                    <button className="ligma-btn ghost" type="button" onClick={() => copyExisting(inv.token)}>Copy</button>
+                    <button className="ligma-btn danger" type="button" onClick={() => revoke(inv.token)}>Revoke</button>
                   </span>
-                  <button className="ligma-btn ghost" type="button" onClick={() => copyExisting(inv.token)}>Copy</button>
-                  <button className="ligma-btn danger" type="button" onClick={() => revoke(inv.token)}>Revoke</button>
                 </div>
               ))}
             </div>
@@ -219,27 +210,34 @@ export function InviteModal({ room_id, onClose }: Props) {
           {members.map((m) => {
             const isOwner = m.user_id === ownerId;
             const isMe = m.user_id === myUserId;
+            const initial = m.display?.trim().slice(0, 1).toUpperCase() || "?";
             return (
-              <div
-                key={m.user_id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  border: "1px solid #e2e8f0",
-                  borderRadius: 8,
-                  padding: "8px 10px",
-                }}
-              >
-                <span style={{ fontWeight: 600 }}>{m.display}</span>
-                <span className="ligma-mute" style={{ fontSize: 11 }}>{m.email}</span>
-                <span className={`role-pill ${m.role}`} style={{ marginLeft: "auto" }}>{m.role}</span>
-                {!isOwner && !isMe && (
-                  <button className="ligma-btn danger" type="button" onClick={() => kick(m.user_id)}>
-                    Remove
-                  </button>
-                )}
-                {isOwner && <span className="ligma-mute" style={{ fontSize: 10 }}>owner</span>}
+              <div key={m.user_id} className="member-row">
+                <span className="member-avatar" aria-hidden="true">{initial}</span>
+                <div className="member-identity">
+                  <span className="member-name">
+                    {m.display}
+                    {isMe && (
+                      <span className="ligma-mute" style={{ marginLeft: 6, fontSize: 11, fontWeight: 500 }}>
+                        (you)
+                      </span>
+                    )}
+                  </span>
+                  <span className="member-email">{m.email}</span>
+                </div>
+                <span className="member-tag">
+                  <span className={`role-pill ${m.role}`}>{m.role}</span>
+                  {isOwner && (
+                    <span className="ligma-mute" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 }}>
+                      Owner
+                    </span>
+                  )}
+                  {!isOwner && !isMe && (
+                    <button className="ligma-btn danger" type="button" onClick={() => kick(m.user_id)}>
+                      Remove
+                    </button>
+                  )}
+                </span>
               </div>
             );
           })}

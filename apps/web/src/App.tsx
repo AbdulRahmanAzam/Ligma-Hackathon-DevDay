@@ -1899,9 +1899,9 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
                 />
               ))}
             </div>
-            <div className="role-pill" aria-label="Your role">
+            <div className={`role-pill ${userRole}`} aria-label="Your role">
               <ShieldAlert size={14} aria-hidden="true" />
-              <span>Role: {roleLabel}</span>
+              <span>{roleLabel}</span>
             </div>
             {isViewOnly && (
               <div className="view-only-pill" aria-live="polite">

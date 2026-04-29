@@ -56,8 +56,14 @@ export function Login({ onAuth, defaultTab = "signin", inviteRoomName }: Props) 
   return (
     <div className="ligma-shell" style={{ display: "grid", placeItems: "center" }}>
       <div className="ligma-card" style={{ minWidth: 380, maxWidth: 420 }}>
-        <h1 className="ligma-h1">LIGMA</h1>
-        <div className="ligma-mute" style={{ marginBottom: 16 }}>
+        <div className="brand-lockup" aria-label="Ligma">
+          <span className="brand-mark">L</span>
+          <div className="brand-text">
+            <h1>Ligma</h1>
+            <p>Live ideation to execution</p>
+          </div>
+        </div>
+        <div className="ligma-mute" style={{ marginTop: 14, marginBottom: 4 }}>
           {inviteRoomName
             ? `Sign in or create an account to join "${inviteRoomName}".`
             : "Sign in or create an account to start."}

@@ -69,17 +69,19 @@
 }
 
 .brand-mark {
-  width: 42px;
-  height: 42px;
+  width: 40px;
+  height: 40px;
   display: grid;
   place-items: center;
-  border: 1px solid #17201d;
+  border: 0;
   border-radius: 8px;
   background: #17201d;
-  color: #f7cb45;
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: 26px;
-  font-weight: 700;
+  color: #ffffff;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  flex: 0 0 auto;
 }
 
 .brand-lockup h1 {
@@ -142,19 +144,15 @@
   color: #9f1239;
 }
 
-.role-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+/* Role pill base + tier colours live in auth-screens.css so the same pill
+ * renders identically on Login/Home/InviteModal/topbar. The topbar variant
+ * just needs a slightly taller hit-target so it lines up with the other
+ * 30px pills (connection, AI, view-only). */
+.identity-controls .role-pill {
   height: 30px;
   padding: 0 12px;
-  border: 1px solid #d8deea;
-  border-radius: 999px;
-  background: #f6f8fc;
-  color: #394357;
   font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
+  gap: 6px;
 }
 
 .room-field,
@@ -230,12 +228,17 @@ button {
   padding: 0;
   border: 2px solid #ffffff;
   border-radius: 50%;
-  box-shadow: 0 0 0 1px #b9c3b5;
+  box-shadow: 0 0 0 1px #cdd4e3;
   cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.swatch:hover {
+  transform: scale(1.08);
 }
 
 .swatch.active {
-  box-shadow: 0 0 0 2px #18201f;
+  box-shadow: 0 0 0 2px #6366f1;
 }
 
 .swatch-0 {
@@ -343,7 +346,7 @@ button {
 .rail-divider {
   height: 1px;
   margin: 4px 7px;
-  background: #cfd6c9;
+  background: #e3e7f0;
 }
 
 .canvas-stage {
@@ -454,10 +457,10 @@ button {
   z-index: 23;
   width: 148px;
   height: 148px;
-  border: 4px solid #f7cb45;
+  border: 4px solid #6366f1;
   border-radius: 50%;
   pointer-events: none;
-  box-shadow: 0 0 0 12px rgba(247, 203, 69, 0.24);
+  box-shadow: 0 0 0 12px rgba(99, 102, 241, 0.24);
 }
 
 .right-panel {
@@ -505,10 +508,16 @@ button {
   gap: 7px;
   border: 0;
   background: #ffffff;
-  color: #32413b;
+  color: #1f2942;
   cursor: pointer;
-  font-size: 14px;
-  font-weight: 800;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  transition: color 120ms ease;
+}
+
+.panel-toggle:hover {
+  color: #6366f1;
 }
 
 .panel-edge-toggle {
@@ -520,21 +529,23 @@ button {
   right: var(--panel-edge-offset);
   display: grid;
   place-items: center;
-  border: 1px solid #cfd6c9;
+  border: 1px solid #e3e7f0;
   border-radius: 999px;
   background: #ffffff;
-  color: #32413b;
+  color: #1f2942;
   cursor: pointer;
-  box-shadow: 0 10px 20px rgba(24, 32, 31, 0.12);
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.12);
+  transition: border-color 120ms ease, color 120ms ease;
 }
 
 .panel-edge-toggle:hover {
-  border-color: #738176;
+  border-color: #6366f1;
+  color: #6366f1;
 }
 
 /* Ensure the toggle remains obvious when the panel is collapsed or scrolled. */
 .panel-toggle-section {
-  box-shadow: 0 8px 20px rgba(24, 32, 31, 0.08);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
 }
 
 /* Reposition the tldraw watermark to the left rail bottom. */
@@ -560,7 +571,7 @@ button {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1px;
   overflow: hidden;
-  background: #cfd6c9;
+  background: #e3e7f0;
 }
 
 .metric {
@@ -613,8 +624,9 @@ button {
   border-radius: 50%;
   color: #ffffff;
   font-size: 12px;
-  font-weight: 900;
-  box-shadow: 0 0 0 1px #c7d0c5;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  box-shadow: 0 0 0 1px #cdd4e3;
 }
 
 .avatar-0 {
@@ -652,14 +664,15 @@ button {
 .node-id {
   min-height: 36px;
   margin: 0 0 10px;
-  padding: 8px;
-  border-radius: 7px;
-  background: #f2f5ef;
-  color: #32413b;
-  font-family: 'Cascadia Mono', Consolas, monospace;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f7f8fc;
+  color: #1f2942;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
   font-size: 12px;
   line-height: 1.35;
   word-break: break-word;
+  border: 1px solid #e3e7f0;
 }
 
 .lock-controls {
@@ -755,10 +768,12 @@ button {
 .empty-state {
   margin: 0;
   padding: 14px;
-  border: 1px dashed #c7d0c5;
+  border: 1px dashed #cdd4e3;
   border-radius: 8px;
-  color: #69736e;
+  color: #6b7a96;
   font-size: 13px;
+  text-align: center;
+  background: rgba(247, 248, 252, 0.6);
 }
 
 .replay-bar {
@@ -853,16 +868,18 @@ button {
   height: 30px;
   display: grid;
   place-items: center;
-  border: 1px solid #c7d0c5;
+  border: 1px solid var(--line);
   border-radius: 999px;
   background: #ffffff;
-  color: #18201f;
+  color: var(--ink-700);
   cursor: pointer;
-  box-shadow: 0 10px 20px rgba(33, 42, 38, 0.12);
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.12);
+  transition: border-color 120ms ease, color 120ms ease;
 }
 
 .editbar-close:hover {
-  border-color: #738176;
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .replay-controls button.active {
@@ -994,7 +1011,7 @@ input:focus-visible {
     max-width: none;
   }
 
-  .role-pill {
+  .identity-controls .role-pill {
     width: 100%;
     justify-content: center;
   }
@@ -1153,6 +1170,7 @@ html, body, #root {
   border-radius: 999px;
   padding: 7px 14px;
   background: rgba(255, 255, 255, 0.92);
+  color: var(--ink-700);
   box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
 }
 
@@ -1470,19 +1488,21 @@ html, body, #root {
    ============================================================= */
 
 .ai-status-pill {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   height: 30px;
   gap: 5px;
   padding: 0 10px;
-  border: 1px solid #c7d0c5;
+  border: 1px solid var(--line);
   border-radius: 999px;
   background: #ffffff;
-  color: #56635c;
+  color: var(--ink-500);
   font-size: 11px;
   font-weight: 700;
+  letter-spacing: 0.02em;
   white-space: nowrap;
-  transition: border-color 0.3s, color 0.3s;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: border-color 200ms ease, color 200ms ease;
 }
 
 .ai-status-pill.loading {
@@ -1544,19 +1564,21 @@ html, body, #root {
   justify-content: center;
   gap: 8px;
   height: 40px;
-  border: 1px solid #c7d0c5;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #17201d, #1a2b25);
-  color: #f7cb45;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #ffffff;
   font-size: 13px;
   font-weight: 700;
+  letter-spacing: 0.01em;
   cursor: pointer;
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease;
 }
 
 .summary-export-button:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(23, 32, 29, 0.2);
+  filter: brightness(1.04);
+  box-shadow: 0 8px 20px var(--accent-glow);
 }
 
 .summary-export-button:disabled {
@@ -1597,9 +1619,10 @@ html, body, #root {
   max-height: 85vh;
   display: flex;
   flex-direction: column;
-  border-radius: 16px;
-  background: #fbfcf7;
-  box-shadow: 0 32px 80px rgba(23, 32, 29, 0.3);
+  border-radius: 14px;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  box-shadow: 0 32px 80px rgba(15, 23, 42, 0.22);
   overflow: hidden;
   animation: modalSlideIn 0.25s ease;
 }
@@ -1614,7 +1637,7 @@ html, body, #root {
   align-items: center;
   justify-content: space-between;
   padding: 18px 20px;
-  border-bottom: 1px solid #cfd6c9;
+  border-bottom: 1px solid var(--line);
   background: #ffffff;
 }
 
@@ -1622,11 +1645,14 @@ html, body, #root {
   display: flex;
   align-items: center;
   gap: 10px;
+  color: var(--ink-900);
 }
 
 .summary-modal-title h2 {
   margin: 0;
   font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .summary-modal-close {
@@ -1634,42 +1660,49 @@ html, body, #root {
   height: 34px;
   display: grid;
   place-items: center;
-  border: 1px solid #c7d0c5;
+  border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
-  color: #32413b;
+  color: var(--ink-500);
   cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
 }
 
 .summary-modal-close:hover {
-  background: #f2f5ef;
+  background: rgba(15, 23, 42, 0.04);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .summary-modal-actions {
   display: flex;
   gap: 8px;
   padding: 12px 20px;
-  border-bottom: 1px solid #cfd6c9;
+  border-bottom: 1px solid var(--line);
+  background: #ffffff;
 }
 
 .summary-action-button {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 36px;
   padding: 0 14px;
-  border: 1px solid #c7d0c5;
+  border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
-  color: #18201f;
+  color: var(--ink-900);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: border-color 120ms ease, color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
 }
 
 .summary-action-button:hover {
-  background: #f2f5ef;
+  border-color: var(--accent);
+  color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px var(--accent-glow);
 }
 
 .summary-modal-content {
@@ -1677,12 +1710,12 @@ html, body, #root {
   margin: 0;
   padding: 20px;
   overflow: auto;
-  font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, 'Courier New', monospace;
   font-size: 12px;
   line-height: 1.55;
-  color: #18201f;
+  color: var(--ink-900);
   white-space: pre-wrap;
   word-break: break-word;
-  background: #f8faf3;
+  background: var(--paper);
 }
 
