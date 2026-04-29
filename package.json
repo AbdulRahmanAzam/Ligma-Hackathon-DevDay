@@ -9,11 +9,14 @@
   ],
   "scripts": {
     "dev": "npm run -ws --if-present --parallel dev",
-    "build": "npm run -ws --if-present build",
+    "build": "npm run build:server",
+    "build:server": "npm run -w @ligma/shared build && npm run -w @ligma/server build",
+    "build:web": "npm run -w @ligma/web build",
     "lint": "npm run -ws --if-present lint",
     "seed": "npm run -w @ligma/server seed",
     "server": "npm run -w @ligma/server dev",
-    "web": "npm run -w @ligma/web dev"
+    "web": "npm run -w @ligma/web dev",
+    "start": "npm run -w @ligma/server start"
   },
   "devDependencies": {
     "@vercel/node": "^3.0.0",
