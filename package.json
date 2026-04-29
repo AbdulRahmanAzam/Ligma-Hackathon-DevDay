@@ -1,6 +1,7 @@
 {
   "name": "ligma",
   "version": "1.0.0",
+  "packageManager": "pnpm@10.33.2",
   "private": true,
   "description": "LIGMA — real-time collaborative ideation surface (DevDay'26 Hackathon, spec rebuild)",
   "workspaces": [
