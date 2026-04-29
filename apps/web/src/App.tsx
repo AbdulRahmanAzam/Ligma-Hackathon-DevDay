@@ -1493,37 +1493,6 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isReplayPlaying, editor, replaySpeed])
 
-  const applyRoomChange = useCallback(() => {
-    const nextRoomId = normalizeRoomId(roomInput)
-    // If the room ID hasn't changed, just copy the link instead of reconnecting
-    if (nextRoomId === roomId) {
-      copyRoomLink()
-      return
-    }
-    setRoomId(nextRoomId)
-    setRoomInput(nextRoomId)
-    setEditor(null)
-    setEvents([])
-    eventsRef.current = []
-    setTasks([])
-    taskFingerprintRef.current = ''
-    taskDoc.transact(() => {
-      if (taskArray.length) taskArray.delete(0, taskArray.length)
-    }, 'local-room-reset')
-    setStats(EMPTY_STATS)
-    setIntentBadges([])
-    setPresenceCursors({})
-    setReplayFrames([])
-    setReplayIndex(0)
-    setReplayCursors({})
-    replayCursorMapRef.current = {}
-    replayShapeMapRef.current = new Map()
-    replayLiveSnapshotRef.current = null
-    lastEventSeqRef.current = 0
-    clearIntentCache()
-    aiCacheRef.current = new Map()
-  }, [roomInput, roomId, copyRoomLink, taskArray, taskDoc])
-
   const copyRoomLink = useCallback(async () => {
     const text = window.location.href
     let ok = false
@@ -1556,6 +1525,38 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
     setShareLabel(ok ? 'Copied!' : 'Copy failed')
     window.setTimeout(() => setShareLabel('Copy room link'), ok ? 1600 : 2400)
   }, [])
+
+  const applyRoomChange = useCallback(() => {
+    const nextRoomId = normalizeRoomId(roomInput)
+    // If the room ID hasn't changed, just copy the link instead of reconnecting
+    if (nextRoomId === roomId) {
+      copyRoomLink()
+      return
+    }
+    setRoomId(nextRoomId)
+    setRoomInput(nextRoomId)
+    setEditor(null)
+    setEvents([])
+    eventsRef.current = []
+    setTasks([])
+    taskFingerprintRef.current = ''
+    taskDoc.transact(() => {
+      if (taskArray.length) taskArray.delete(0, taskArray.length)
+    }, 'local-room-reset')
+    setStats(EMPTY_STATS)
+    setIntentBadges([])
+    setPresenceCursors({})
+    setReplayFrames([])
+    setReplayIndex(0)
+    setReplayCursors({})
+    replayCursorMapRef.current = {}
+    replayShapeMapRef.current = new Map()
+    replayLiveSnapshotRef.current = null
+    lastEventSeqRef.current = 0
+    clearIntentCache()
+    aiCacheRef.current = new Map()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomInput, roomId, taskArray, taskDoc])
 
   const generateAISummary = useCallback(async () => {
     if (!editor) return
