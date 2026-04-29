@@ -738,6 +738,13 @@ button {
   background: #ffd0c8;
 }
 
+/* Highlighted when the replay scrubber is parked exactly at this event */
+.event-row.replay-active {
+  background: rgba(14, 165, 233, 0.1);
+  border-left: 3px solid #0ea5e9;
+  padding-left: 7px;
+}
+
 .task-row strong,
 .event-row strong {
   color: #18201f;
@@ -1199,6 +1206,12 @@ html, body, #root {
 .event-row.updated span { background: #2563eb; }
 .event-row.deleted span { background: #dc2626; }
 .event-row.created span { background: #059669; }
+.event-row.replay-active {
+  background: rgba(14, 165, 233, 0.12);
+  border-left: 3px solid #0ea5e9;
+  padding-left: 7px;
+  transform: none !important;
+}
 
 .replay-bar {
   border-radius: 14px;

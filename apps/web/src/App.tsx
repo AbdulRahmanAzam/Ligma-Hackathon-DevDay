@@ -729,6 +729,10 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   // Snapshot of live shapes captured the moment replay started; used to restore live canvas.
   const replayLiveSnapshotRef = useRef<TLShape[] | null>(null)
   const isReplayModeRef = useRef(false)
+  // Mirror of replayFrames state — lets the replay playback loop always access the latest
+  // frames without being in the useEffect dependency array (which would restart the loop on
+  // every new incoming event).
+  const replayFramesRef = useRef<ReplayFrame[]>([])
   // Timer refs for debouncing expensive operations during high-frequency store updates
   const snapshotTimerRef = useRef<number | null>(null)
   const badgeRafRef = useRef<number | null>(null)
@@ -766,6 +770,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   useEffect(() => { userRoleRef.current = userRole }, [userRole])
   useEffect(() => { userNameRef.current = userName }, [userName])
   useEffect(() => { userColorRef.current = userColor }, [userColor])
+  useEffect(() => { replayFramesRef.current = replayFrames }, [replayFrames])
 
   // Preload AI model on mount (downloads once, cached in IndexedDB)
   useEffect(() => {
@@ -1408,33 +1413,68 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   }, [editor, refreshCanvasSnapshot, sendSocketMessage, userColor, userName, userPreferences, userRole])
 
   useEffect(() => {
-    if (!isReplayPlaying || !editor || replayFrames.length <= 1) return
+    if (!isReplayPlaying || !editor) return
+    const activeEditor = editor
 
-    const interval = window.setInterval(() => {
-      setReplayIndex((currentIndex) => {
-        const nextIndex = Math.min(currentIndex + 1, replayFrames.length - 1)
-        const frame = replayFrames[nextIndex]
+    const frames = replayFramesRef.current
+    if (frames.length <= 1) {
+      setIsReplayPlaying(false)
+      return
+    }
 
-        if (frame) {
-          if (!replayLiveSnapshotRef.current) {
-            replayLiveSnapshotRef.current = Array.from(liveShapeMapRef.current.values())
-          }
-          isReplayModeRef.current = true
-          setIsReplayMode(true)
-          applyShapeList(editor, frame.shapes)
-          setReplayCursors(frame.cursors)
+    let cancelled = false
+    // Capture the starting index from the current render so playback resumes
+    // from wherever the scrubber was (or from 0 if just entered replay mode).
+    const startIndex = replayIndex
+
+    function step(fromIndex: number) {
+      if (cancelled) return
+      const frames = replayFramesRef.current
+      const nextIndex = fromIndex + 1
+
+      if (nextIndex >= frames.length) {
+        setIsReplayPlaying(false)
+        return
+      }
+
+      const fromFrame = frames[fromIndex]!
+      const toFrame = frames[nextIndex]!
+
+      // Time-accurate pacing: scale actual inter-event delta to a reasonable
+      // playback window. Raw delta * 0.2 gives 1 second of real time ≈ 200 ms
+      // of replay. Floor at 150 ms so rapid-fire events are still visible;
+      // cap at 1500 ms so long pauses in the session don't stall playback.
+      const rawDelta = new Date(toFrame.at).getTime() - new Date(fromFrame.at).getTime()
+      const scaledDelay = Math.max(150, Math.min(rawDelta * 0.2, 1500)) / replaySpeed
+
+      window.setTimeout(() => {
+        if (cancelled) return
+
+        if (!replayLiveSnapshotRef.current) {
+          replayLiveSnapshotRef.current = Array.from(liveShapeMapRef.current.values())
         }
+        isReplayModeRef.current = true
+        setIsReplayMode(true)
+        setReplayIndex(nextIndex)
+        applyShapeList(activeEditor, toFrame.shapes)
+        setReplayCursors(toFrame.cursors)
 
-        if (nextIndex >= replayFrames.length - 1) {
+        if (nextIndex >= replayFramesRef.current.length - 1) {
           setIsReplayPlaying(false)
+        } else {
+          step(nextIndex)
         }
+      }, scaledDelay)
+    }
 
-        return nextIndex
-      })
-    }, Math.max(180, 900 / replaySpeed))
+    step(startIndex)
 
-    return () => window.clearInterval(interval)
-  }, [editor, isReplayPlaying, replayFrames, replaySpeed])
+    return () => { cancelled = true }
+  // replayIndex and replayFrames intentionally omitted: the closure captures
+  // startIndex once (correct starting position) and replayFramesRef provides
+  // always-fresh frames without restarting the loop on every new incoming event.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isReplayPlaying, editor, replaySpeed])
 
   const applyRoomChange = useCallback(() => {
     const nextRoomId = normalizeRoomId(roomInput)
@@ -1719,9 +1759,39 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
       setIsReplayPlaying(false)
       return
     }
-    previewReplayFrame(0)
+    // If already in replay mode (scrubber is parked at some frame), continue
+    // from the current position. Otherwise enter replay from the beginning.
+    if (!isReplayMode) {
+      previewReplayFrame(0)
+    }
     setIsReplayPlaying(true)
-  }, [isReplayPlaying, previewReplayFrame, replayFrames.length])
+  }, [isReplayMode, isReplayPlaying, previewReplayFrame, replayFrames.length])
+
+  // Time-travel the canvas to the exact historical state captured at the moment
+  // of a given event — analogous to opening a GitHub commit: every shape that
+  // existed at that seq is shown, nothing from after it, nothing from before is
+  // missing. After applying the frame we also zoom to the affected node so the
+  // user sees exactly what changed.
+  const jumpToEventLog = useCallback(
+    (event: CanvasEvent) => {
+      if (!replayFrames.length) return
+
+      // replayFrames are stored in ascending seq order (index 0 = first ever event).
+      // Find the frame whose seq exactly matches this event, or fall back to the
+      // largest seq that is still ≤ event.seq.
+      let frameIndex = replayFrames.findIndex((f) => f.seq === event.seq)
+      if (frameIndex === -1) {
+        frameIndex = 0
+        for (let i = 0; i < replayFrames.length; i++) {
+          if (replayFrames[i]!.seq <= event.seq) frameIndex = i
+          else break
+        }
+      }
+
+      previewReplayFrame(frameIndex)
+    },
+    [previewReplayFrame, replayFrames],
+  )
 
   const completeOnboarding = useCallback(() => {
     window.localStorage.setItem('ligma.onboardingComplete', 'true')
@@ -2178,10 +2248,11 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
               {events.length ? (
                 events.map((event) => (
                   <button
-                    className={`event-row ${event.operation}`}
+                    className={`event-row ${event.operation}${isReplayMode && currentReplayFrame?.seq === event.seq ? ' replay-active' : ''}`}
                     key={event.id}
                     type="button"
-                    onClick={() => event.nodeId && focusNode(event.nodeId as TLShapeId)}
+                    title="Click to time-travel canvas to this moment"
+                    onClick={() => jumpToEventLog(event)}
                   >
                     <span>{event.operation}</span>
                     <strong>{event.label}</strong>
