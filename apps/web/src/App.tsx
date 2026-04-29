@@ -714,6 +714,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   const [highlightedNodeId, setHighlightedNodeId] = useState<TLShapeId | null>(null)
   const [showPresenceModal, setShowPresenceModal] = useState(false)
   const [showEventLogModal, setShowEventLogModal] = useState(false)
+  const [showTaskDetailModal, setShowTaskDetailModal] = useState(false)
   const [onboardingStep, setOnboardingStep] = useState(() =>
     window.localStorage.getItem('ligma.onboardingComplete') === 'true' ? onboardingSteps.length : 0,
   )
@@ -2142,21 +2143,11 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
           </AnimatePresence>
         </div>
 
-        <button
-          className="panel-edge-toggle"
-          type="button"
-          title={isPanelCollapsed ? 'Open panel' : 'Collapse panel'}
-          aria-label={isPanelCollapsed ? 'Open panel' : 'Collapse panel'}
-          onClick={() => setIsPanelCollapsed((isCollapsed) => !isCollapsed)}
-        >
-          {isPanelCollapsed ? <ChevronLeft size={16} aria-hidden="true" /> : <ChevronRight size={16} aria-hidden="true" />}
-        </button>
-
         <aside className={`right-panel ${isPanelCollapsed ? 'collapsed' : ''}`} aria-label="Execution panel">
           <section className="panel-section panel-toggle-section">
             <button className="panel-toggle" type="button" onClick={() => setIsPanelCollapsed((isCollapsed) => !isCollapsed)}>
               {isPanelCollapsed ? <ChevronLeft size={16} aria-hidden="true" /> : <ChevronRight size={16} aria-hidden="true" />}
-              <span>{isPanelCollapsed ? `${tasks.length} tasks · ${events.length} events` : ''}</span>
+              {!isPanelCollapsed && <span>Collapse Panel</span>}
             </button>
           </section>
 
@@ -2226,27 +2217,18 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
                 </span>
               )}
             </div>
-            <div className="task-list">
-              {tasks.length ? (
-                tasks.map((task, taskIndex) => (
-                  <button
-                    className="task-row"
-                    key={`${task.nodeId}-${task.createdAt}-${taskIndex}`}
-                    type="button"
-                    onClick={() => focusNode(task.nodeId)}
-                  >
-                    <span className={`task-avatar avatar-${task.authorColorIndex}`}>{task.authorName.slice(0, 1).toUpperCase()}</span>
-                    <span className="task-intent">{intentCopy[task.intent]}</span>
-                    <strong>{task.title}</strong>
-                    <small>
-                      {task.authorName} / {task.authorRole} / {formatTimestamp(task.createdAt)}
-                    </small>
-                  </button>
-                ))
-              ) : (
-                <p className="empty-state">No action items yet</p>
-              )}
-            </div>
+            <button
+              className="panel-section-open-btn"
+              type="button"
+              onClick={() => setShowTaskDetailModal(true)}
+            >
+              <ClipboardList size={18} aria-hidden="true" />
+              <div className="panel-section-open-content">
+                <strong>View All Tasks</strong>
+                <small>{tasks.length} action item{tasks.length !== 1 ? 's' : ''}</small>
+              </div>
+              <ChevronRight size={18} aria-hidden="true" />
+            </button>
           </section>
 
           <section className="panel-section ai-summary-section">
@@ -2270,7 +2252,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
           </section>
 
           <section className="panel-section event-log">
-            <div className="section-heading event-log-heading-clickable" onClick={() => setShowEventLogModal(true)} role="button" tabIndex={0} title="Click to view full event analytics">
+            <div className="section-heading">
               <Activity size={16} aria-hidden="true" />
               <h2>Event Log</h2>
               <span className="append-only-badge" title="Events are immutable — append-only">
@@ -2278,27 +2260,18 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
                 Append-only
               </span>
             </div>
-            <div className="event-list" ref={eventListRef}>
-              {events.length ? (
-                events.map((event) => (
-                  <button
-                    className={`event-row ${event.operation}${isReplayMode && currentReplayFrame?.seq === event.seq ? ' replay-active' : ''}`}
-                    key={event.id}
-                    type="button"
-                    title="Click to time-travel canvas to this moment"
-                    onClick={() => jumpToEventLog(event)}
-                  >
-                    <span>{event.operation}</span>
-                    <strong>{event.label}</strong>
-                    <small>
-                      #{event.seq} / {event.authorName} / {formatTime(event.at)}
-                    </small>
-                  </button>
-                ))
-              ) : (
-                <p className="empty-state">Waiting for canvas events</p>
-              )}
-            </div>
+            <button
+              className="panel-section-open-btn"
+              type="button"
+              onClick={() => setShowEventLogModal(true)}
+            >
+              <BarChart3 size={18} aria-hidden="true" />
+              <div className="panel-section-open-content">
+                <strong>View Event Analytics</strong>
+                <small>{events.length} event{events.length !== 1 ? 's' : ''} recorded</small>
+              </div>
+              <ChevronRight size={18} aria-hidden="true" />
+            </button>
           </section>
         </aside>
       </section>
@@ -2601,7 +2574,13 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
               </h3>
               <div className="event-timeline-list">
                 {events.length ? events.map((event) => (
-                  <div className={`event-timeline-row ${event.operation}`} key={event.id}>
+                  <button
+                    className={`event-timeline-row ${event.operation}${isReplayMode && currentReplayFrame?.seq === event.seq ? ' replay-active' : ''}`}
+                    key={event.id}
+                    type="button"
+                    title="Click to time-travel canvas to this moment"
+                    onClick={() => jumpToEventLog(event)}
+                  >
                     <div className="event-timeline-time">
                       <Clock size={11} aria-hidden="true" />
                       {formatTime(event.at)}
@@ -2614,9 +2593,140 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
                       </span>
                       {event.authorName}
                     </div>
-                  </div>
+                  </button>
                 )) : (
                   <p className="empty-state">No events recorded yet</p>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* ── Task Detail Modal ── */}
+      {showTaskDetailModal && (
+        <div className="detail-modal-overlay" onClick={() => setShowTaskDetailModal(false)}>
+          <motion.div
+            className="detail-modal detail-modal-wide"
+            initial={{ opacity: 0, y: 20, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.97 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="detail-modal-header">
+              <div className="detail-modal-header-left">
+                <Sparkles size={18} aria-hidden="true" />
+                <h2>Task Board</h2>
+                <span className="detail-modal-count">{tasks.length} action item{tasks.length !== 1 ? 's' : ''}</span>
+              </div>
+              <button className="detail-modal-close" type="button" onClick={() => setShowTaskDetailModal(false)}>
+                <X size={16} aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="detail-modal-body">
+              {/* Task summary stats */}
+              <div className="task-summary-row">
+                {(() => {
+                  const byRole = {
+                    Lead: tasks.filter(t => t.authorRole === 'Lead').length,
+                    Contributor: tasks.filter(t => t.authorRole === 'Contributor').length,
+                    Viewer: tasks.filter(t => t.authorRole === 'Viewer').length,
+                  }
+                  const uniqueAuthors = new Set(tasks.map(t => t.authorName)).size
+                  return (
+                    <>
+                      <div className="task-stat-card">
+                        <ClipboardList size={16} aria-hidden="true" />
+                        <span className="task-stat-value">{tasks.length}</span>
+                        <span className="task-stat-label">Total Tasks</span>
+                      </div>
+                      <div className="task-stat-card">
+                        <Crown size={14} aria-hidden="true" />
+                        <span className="task-stat-value">{byRole.Lead}</span>
+                        <span className="task-stat-label">By Leads</span>
+                      </div>
+                      <div className="task-stat-card">
+                        <Pencil size={14} aria-hidden="true" />
+                        <span className="task-stat-value">{byRole.Contributor}</span>
+                        <span className="task-stat-label">By Contributors</span>
+                      </div>
+                      <div className="task-stat-card">
+                        <Users size={14} aria-hidden="true" />
+                        <span className="task-stat-value">{uniqueAuthors}</span>
+                        <span className="task-stat-label">Contributors</span>
+                      </div>
+                    </>
+                  )
+                })()}
+              </div>
+
+              {/* Task list */}
+              <h3 className="event-section-title">
+                <ClipboardList size={14} aria-hidden="true" />
+                All Action Items
+              </h3>
+              <div className="task-detail-list">
+                {tasks.length ? tasks.map((task, taskIndex) => (
+                  <div className="task-detail-card-compact" key={`${task.nodeId}-${task.createdAt}-${taskIndex}`}>
+                    <div className="task-detail-card-header">
+                      <span className={`task-avatar avatar-${task.authorColorIndex}`}>
+                        {task.authorName.slice(0, 1).toUpperCase()}
+                      </span>
+                      <div className="task-detail-card-meta">
+                        <div className="task-detail-card-badges">
+                          <span className="task-intent-badge">{intentCopy[task.intent]}</span>
+                          <span className={`presence-role-chip mini ${task.authorRole}`}>
+                            {task.authorRole === 'Lead' ? <Crown size={9} /> : task.authorRole === 'Contributor' ? <Pencil size={9} /> : <Eye size={9} />}
+                            {task.authorRole}
+                          </span>
+                        </div>
+                        <div className="task-detail-card-info">
+                          <span className="task-author-name">{task.authorName}</span>
+                          <span className="task-meta-dot">·</span>
+                          <span className="task-created-time">{formatTimestamp(task.createdAt)}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="task-detail-card-content">
+                      <p className="task-detail-card-title">{task.title}</p>
+                      <div className="task-detail-card-actions">
+                        <button
+                          className="task-detail-card-action-btn"
+                          type="button"
+                          onClick={() => {
+                            focusNode(task.nodeId)
+                            setShowTaskDetailModal(false)
+                          }}
+                        >
+                          <MousePointer2 size={13} aria-hidden="true" />
+                          <span>Focus</span>
+                        </button>
+                        <button
+                          className="task-detail-card-action-btn"
+                          type="button"
+                          onClick={async () => {
+                            const text = `Task: ${task.title}\nCreated by: ${task.authorName} (${task.authorRole})\nCreated at: ${new Date(task.createdAt).toLocaleString()}\nNode ID: ${task.nodeId}`
+                            const ok = await copyToClipboard(text)
+                            if (ok) {
+                              const btn = document.activeElement as HTMLButtonElement
+                              if (btn) {
+                                const orig = btn.innerHTML
+                                btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg><span>Copied!</span>'
+                                setTimeout(() => { btn.innerHTML = orig }, 1500)
+                              }
+                            }
+                          }}
+                        >
+                          <Copy size={13} aria-hidden="true" />
+                          <span>Copy</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )) : (
+                  <p className="empty-state">No action items yet</p>
                 )}
               </div>
             </div>

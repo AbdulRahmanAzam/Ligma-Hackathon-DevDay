@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Sparkles, Users, Zap, ShieldCheck, ArrowRight } from "lucide-react";
 import "./auth-screens.css";
 import { persistSession, signIn, signUp } from "./auth-api";
 
@@ -54,98 +55,221 @@ export function Login({ onAuth, defaultTab = "signin", inviteRoomName }: Props) 
   }
 
   return (
-    <div className="ligma-shell" style={{ display: "grid", placeItems: "center" }}>
-      <div className="ligma-card" style={{ minWidth: 380, maxWidth: 420 }}>
-        <div className="brand-lockup" aria-label="Ligma">
-          <span className="brand-mark">L</span>
-          <div className="brand-text">
-            <h1>Ligma</h1>
-            <p>Live ideation to execution</p>
+    <div className="auth-shell">
+      <div className="auth-orb auth-orb-1" aria-hidden="true" />
+      <div className="auth-orb auth-orb-2" aria-hidden="true" />
+      <div className="auth-orb auth-orb-3" aria-hidden="true" />
+
+      <div className="auth-grid">
+        <aside className="auth-hero">
+          <div className="brand-lockup" aria-label="Ligma">
+            <span className="brand-mark">L</span>
+            <div className="brand-text">
+              <h1>Ligma</h1>
+              <p>Live ideation to execution</p>
+            </div>
           </div>
-        </div>
-        <div className="ligma-mute" style={{ marginTop: 14, marginBottom: 4 }}>
-          {inviteRoomName
-            ? `Sign in or create an account to join "${inviteRoomName}".`
-            : "Sign in or create an account to start."}
-        </div>
 
-        <div className="tabs">
-          <button className={`tab ${tab === "signin" ? "active" : ""}`} onClick={() => setTab("signin")}>
-            Sign in
-          </button>
-          <button className={`tab ${tab === "signup" ? "active" : ""}`} onClick={() => setTab("signup")}>
-            Sign up
-          </button>
-        </div>
-
-        {tab === "signin" && (
-          <div>
-            <input
-              className="ligma-input"
-              type="email"
-              autoComplete="email"
-              placeholder="Email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={busy}
-            />
-            <input
-              className="ligma-input"
-              type="password"
-              autoComplete="current-password"
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={busy}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") doSignIn();
-              }}
-            />
-            <button className="ligma-btn primary" style={{ width: "100%" }} onClick={doSignIn} disabled={busy}>
-              {busy ? "Signing in…" : "Sign in"}
-            </button>
+          <div className="auth-hero-copy">
+            <h2 className="auth-hero-title">
+              Where ideas become <span className="auth-hero-accent">action</span>.
+            </h2>
+            <p className="auth-hero-sub">
+              A real-time whiteboard for teams that want their brainstorms to ship.
+              Sketch, decide, and watch tasks fall out automatically.
+            </p>
           </div>
-        )}
 
-        {tab === "signup" && (
-          <div>
-            <input
-              className="ligma-input"
-              type="text"
-              autoComplete="name"
-              placeholder="Display name"
-              value={display}
-              onChange={(e) => setDisplay(e.target.value)}
-              disabled={busy}
-            />
-            <input
-              className="ligma-input"
-              type="email"
-              autoComplete="email"
-              placeholder="Email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={busy}
-            />
-            <input
-              className="ligma-input"
-              type="password"
-              autoComplete="new-password"
-              placeholder="Password (8+ chars)"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={busy}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") doSignUp();
-              }}
-            />
-            <button className="ligma-btn primary" style={{ width: "100%" }} onClick={doSignUp} disabled={busy}>
-              {busy ? "Creating account…" : "Create account"}
-            </button>
+          <ul className="auth-feature-list">
+            <li className="auth-feature">
+              <span className="auth-feature-icon"><Sparkles size={16} /></span>
+              <div>
+                <strong>AI intent detection</strong>
+                <small>Sticky notes auto-classify as actions, decisions, questions.</small>
+              </div>
+            </li>
+            <li className="auth-feature">
+              <span className="auth-feature-icon"><Users size={16} /></span>
+              <div>
+                <strong>Live multi-user canvas</strong>
+                <small>Cursors, presence, and roles — Lead, Contributor, Viewer.</small>
+              </div>
+            </li>
+            <li className="auth-feature">
+              <span className="auth-feature-icon"><Zap size={16} /></span>
+              <div>
+                <strong>Replay every decision</strong>
+                <small>Scrub the timeline to revisit how the room reached the call.</small>
+              </div>
+            </li>
+            <li className="auth-feature">
+              <span className="auth-feature-icon"><ShieldCheck size={16} /></span>
+              <div>
+                <strong>Lock what matters</strong>
+                <small>Pin shapes to roles so only the right people can edit them.</small>
+              </div>
+            </li>
+          </ul>
+        </aside>
+
+        <main className="auth-panel">
+          <div className="auth-card">
+            <div className="auth-card-head">
+              <h2>{tab === "signin" ? "Welcome back" : "Create your account"}</h2>
+              <p className="auth-card-sub">
+                {inviteRoomName
+                  ? `Sign in or create an account to join "${inviteRoomName}".`
+                  : tab === "signin"
+                  ? "Sign in to jump back into your whiteboards."
+                  : "It only takes a few seconds. No credit card."}
+              </p>
+            </div>
+
+            <div className="auth-tabs">
+              <button
+                className={`auth-tab ${tab === "signin" ? "active" : ""}`}
+                onClick={() => {
+                  setTab("signin");
+                  setError(null);
+                }}
+                type="button"
+              >
+                Sign in
+              </button>
+              <button
+                className={`auth-tab ${tab === "signup" ? "active" : ""}`}
+                onClick={() => {
+                  setTab("signup");
+                  setError(null);
+                }}
+                type="button"
+              >
+                Sign up
+              </button>
+              <span className={`auth-tab-indicator ${tab}`} aria-hidden="true" />
+            </div>
+
+            {tab === "signin" && (
+              <div className="auth-form">
+                <label className="auth-field">
+                  <span>Email</span>
+                  <input
+                    className="ligma-input"
+                    type="email"
+                    autoComplete="email"
+                    placeholder="you@team.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    disabled={busy}
+                  />
+                </label>
+                <label className="auth-field">
+                  <span>Password</span>
+                  <input
+                    className="ligma-input"
+                    type="password"
+                    autoComplete="current-password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    disabled={busy}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") doSignIn();
+                    }}
+                  />
+                </label>
+                <button
+                  className="ligma-btn primary auth-submit"
+                  onClick={doSignIn}
+                  disabled={busy}
+                  type="button"
+                >
+                  {busy ? "Signing in…" : (
+                    <>
+                      Sign in <ArrowRight size={16} />
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {tab === "signup" && (
+              <div className="auth-form">
+                <label className="auth-field">
+                  <span>Display name</span>
+                  <input
+                    className="ligma-input"
+                    type="text"
+                    autoComplete="name"
+                    placeholder="What should teammates call you?"
+                    value={display}
+                    onChange={(e) => setDisplay(e.target.value)}
+                    disabled={busy}
+                  />
+                </label>
+                <label className="auth-field">
+                  <span>Email</span>
+                  <input
+                    className="ligma-input"
+                    type="email"
+                    autoComplete="email"
+                    placeholder="you@team.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    disabled={busy}
+                  />
+                </label>
+                <label className="auth-field">
+                  <span>Password</span>
+                  <input
+                    className="ligma-input"
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder="At least 8 characters"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    disabled={busy}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") doSignUp();
+                    }}
+                  />
+                </label>
+                <button
+                  className="ligma-btn primary auth-submit"
+                  onClick={doSignUp}
+                  disabled={busy}
+                  type="button"
+                >
+                  {busy ? "Creating account…" : (
+                    <>
+                      Create account <ArrowRight size={16} />
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {error && <div className="error-pill">{error}</div>}
+
+            <div className="auth-foot">
+              {tab === "signin" ? (
+                <span>
+                  New to Ligma?{" "}
+                  <button className="auth-link" onClick={() => setTab("signup")} type="button">
+                    Create an account
+                  </button>
+                </span>
+              ) : (
+                <span>
+                  Already have an account?{" "}
+                  <button className="auth-link" onClick={() => setTab("signin")} type="button">
+                    Sign in
+                  </button>
+                </span>
+              )}
+            </div>
           </div>
-        )}
-
-        {error && <div className="error-pill">{error}</div>}
+        </main>
       </div>
     </div>
   );

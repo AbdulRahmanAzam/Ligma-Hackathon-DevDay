@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  ligma:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "10000:10000"
+    environment:
+      - NODE_ENV=production
+      - PORT=10000
+      - HOST=0.0.0.0
+      - LOG_LEVEL=info
+      - LIGMA_SYNC_PATH=/ligma-sync
+      - JWT_SECRET=${JWT_SECRET:-change-this-secret-key-in-production}
+      - DO_AI_API_KEY=${DO_AI_API_KEY}
+      - DO_AI_MODEL=${DO_AI_MODEL:-llama3-8b-instruct}
+      - DO_AI_ENDPOINT=${DO_AI_ENDPOINT:-https://api.digitalocean.com/v2/ai/chat/completions}
+    volumes:
+      - ligma-data:/app/apps/server/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:10000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  ligma-data:
+    driver: local

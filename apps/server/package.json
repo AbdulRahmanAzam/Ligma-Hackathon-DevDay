@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json && mkdir -p dist/db && cp src/db/schema.sql dist/db/schema.sql",
+    "build:vercel": "tsc -p tsconfig.json && mkdir -p dist/db && cp src/db/schema.sql dist/db/schema.sql",
     "start": "node dist/index.js",
     "seed": "tsx src/scripts/seed-demo-room.ts",
     "lint": "echo skip"
@@ -29,6 +30,7 @@
     "@types/node": "^22.9.0",
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.5.13",
+    "@vercel/node": "^3.0.0",
     "tsx": "^4.19.2",
     "typescript": "5.6.3"
   }
