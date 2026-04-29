@@ -9,6 +9,8 @@ import { db } from "./db/sqlite.js";
 import { registerAuthRoutes } from "./api/auth-routes.js";
 import { registerAiSummaryRoutes } from "./api/ai-summary.js";
 import { registerRoomRoutes } from "./api/rooms.js";
+import { registerMCPRoutes } from "./api/mcp-routes.js";
+import { getMCPServer } from "./mcp/server.js";
 import { attachWs } from "./ws/gateway.js";
 import { totalRooms } from "./room/registry.js";
 import { seed } from "./scripts/seed-demo-room.js";
@@ -45,6 +47,16 @@ await app.register(cors, {
 registerAuthRoutes(app);
 registerAiSummaryRoutes(app);
 registerRoomRoutes(app);
+registerMCPRoutes(app);
+
+const mcpServer = getMCPServer();
+await mcpServer.initialize();
+
+const shutdown = async () => {
+  await mcpServer.shutdown();
+};
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
 
 app.get("/healthz", async () => ({
   ok: true,

@@ -65,6 +65,8 @@ import type { LucideIcon } from 'lucide-react'
 import 'tldraw/tldraw.css'
 import './App.css'
 import { InviteModal } from './InviteModal'
+import { MCPPanel } from './MCPPanel'
+import { checkMCPHealth } from './mcp-integration'
 import { resolveApiUrl } from './auth-api'
 import {
   classifyIntentAI,
@@ -697,6 +699,16 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
     }
   }, [roomId])
   const [editor, setEditor] = useState<Editor | null>(null)
+  const [mcpConfigured, setMcpConfigured] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    checkMCPHealth().then((res) => {
+      if (!cancelled) setMcpConfigured(res.configured)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting')
   const [events, setEvents] = useState<CanvasEvent[]>([])
   const [tasks, setTasks] = useState<CanvasTask[]>([])
@@ -1989,6 +2001,14 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
               refreshCanvasSnapshot(mountedEditor, false)
             }}
             user={tldrawUser}
+          />
+
+          <MCPPanel
+            editor={editor}
+            roomId={roomId}
+            isLead={userRole === 'Lead'}
+            mcpConfigured={mcpConfigured}
+            selectedShapeId={stats.selectedNodeIds[0] ?? null}
           />
 
           <svg className="presence-layer" aria-hidden="true">
