@@ -1,3 +1,13 @@
+// ---------------------------------------------------------------------------
+// WebSocket Gateway — Custom WS Protocol
+// We use a custom WebSocket protocol layered on top of tldraw's native
+// collaboration rather than relying on tldraw's built-in sync. This enables:
+//   1. Server-side RBAC enforcement — mutations are validated per-role
+//   2. Immutable event logging — every accepted delta is persisted for audit
+//   3. Audit trail & replay — the event log enables timeline scrubbing
+//   4. Selective broadcast — e.g. cursor-leave on disconnect, presence, etc.
+// ---------------------------------------------------------------------------
+
 import type { Server } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import * as Y from "yjs";
@@ -283,6 +293,17 @@ function onConnection(ws: WebSocket, auth: ConnectionAuth): void {
       const sid = session.sessionId;
       leaveRoom(roomId, sid);
       broadcast(roomId, { type: "presence-user", phase: "leave", sessionId: sid });
+      // Immediately notify remaining clients to remove the departing cursor,
+      // so they don't have to wait for the 3-second client-side timeout.
+      broadcast(roomId, {
+        type: "presence-cursor",
+        sessionId: sid,
+        name: session.name,
+        color: session.color,
+        role: session.role,
+        x: -1e9,
+        y: -1e9,
+      });
     }
   });
 
@@ -292,6 +313,15 @@ function onConnection(ws: WebSocket, auth: ConnectionAuth): void {
       const sid = session.sessionId;
       leaveRoom(roomId, sid);
       broadcast(roomId, { type: "presence-user", phase: "leave", sessionId: sid });
+      broadcast(roomId, {
+        type: "presence-cursor",
+        sessionId: sid,
+        name: session.name,
+        color: session.color,
+        role: session.role,
+        x: -1e9,
+        y: -1e9,
+      });
     }
   });
 }

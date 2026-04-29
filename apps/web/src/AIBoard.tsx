@@ -18,6 +18,8 @@ import {
   Plus,
   Clipboard,
   History,
+  MessageSquareText,
+  Send,
 } from "lucide-react";
 import type { Editor, TLShape, TLShapeId } from "tldraw";
 import {
@@ -25,8 +27,10 @@ import {
   createExplanationNode,
   emitErrorToast,
   emitToast,
+  requestChat,
   requestDiagram,
   requestExplanation,
+  type MCPChatReply,
   type MCPDiagram,
   type MCPExplanation,
 } from "./mcp-integration";
@@ -48,14 +52,20 @@ interface CanvasTaskRow {
   intent: string;
 }
 
-type Mode = "explain" | "diagram";
+type Mode = "chat" | "explain" | "diagram";
 
 interface HistoryEntry {
   id: string;
-  taskId: TLShapeId;
+  taskId: TLShapeId | null;
   taskLabel: string;
   mode: Mode;
-  result: MCPExplanation | MCPDiagram;
+  result: MCPExplanation | MCPDiagram | MCPChatReply;
+  ts: string;
+}
+
+interface ChatTurn {
+  role: "user" | "assistant";
+  content: string;
   ts: string;
 }
 
@@ -108,10 +118,14 @@ export function AIBoard({ editor, roomId, open, onClose }: Props) {
   const [tasks, setTasks] = useState<CanvasTaskRow[]>([]);
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<TLShapeId | null>(null);
-  const [mode, setMode] = useState<Mode>("explain");
+  const [mode, setMode] = useState<Mode>("chat");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<HistoryEntry | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+
+  // Chat state
+  const [chatTurns, setChatTurns] = useState<ChatTurn[]>([]);
+  const [chatInput, setChatInput] = useState("");
 
   // Refresh task list whenever the modal opens or canvas content changes.
   useEffect(() => {
@@ -143,6 +157,45 @@ export function AIBoard({ editor, roomId, open, onClose }: Props) {
     () => tasks.find((t) => t.id === selected) ?? null,
     [selected, tasks],
   );
+
+  async function sendChat() {
+    const prompt = chatInput.trim();
+    if (!prompt || busy) return;
+    setBusy(true);
+    const userTurn: ChatTurn = {
+      role: "user",
+      content: prompt,
+      ts: new Date().toISOString(),
+    };
+    setChatTurns((t) => [...t, userTurn]);
+    setChatInput("");
+    try {
+      const reply = await requestChat(
+        roomId,
+        prompt,
+        chatTurns.map((t) => ({ role: t.role, content: t.content })),
+      );
+      const aiTurn: ChatTurn = {
+        role: "assistant",
+        content: reply.reply,
+        ts: reply.generatedAt,
+      };
+      setChatTurns((t) => [...t, aiTurn]);
+      const entry: HistoryEntry = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        taskId: null,
+        taskLabel: prompt.slice(0, 60),
+        mode: "chat",
+        result: reply,
+        ts: reply.generatedAt,
+      };
+      setHistory((h) => [entry, ...h].slice(0, 12));
+    } catch (err) {
+      emitErrorToast(err);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function run() {
     if (!editor || !selectedTask || busy) return;
@@ -220,7 +273,7 @@ export function AIBoard({ editor, roomId, open, onClose }: Props) {
             </span>
             <div>
               <h2>AI Board</h2>
-              <small>Pick a task → run Explain or Generate Diagram. Lead-only.</small>
+              <small>Chat with the AI, or pick a task to explain or diagram. Lead-only.</small>
             </div>
           </div>
           <button
@@ -285,6 +338,15 @@ export function AIBoard({ editor, roomId, open, onClose }: Props) {
                 <button
                   type="button"
                   role="tab"
+                  aria-selected={mode === "chat"}
+                  className={`aiboard-mode-btn ${mode === "chat" ? "active" : ""}`}
+                  onClick={() => setMode("chat")}
+                >
+                  <MessageSquareText size={14} /> Chat
+                </button>
+                <button
+                  type="button"
+                  role="tab"
                   aria-selected={mode === "explain"}
                   className={`aiboard-mode-btn ${mode === "explain" ? "active" : ""}`}
                   onClick={() => setMode("explain")}
@@ -302,25 +364,117 @@ export function AIBoard({ editor, roomId, open, onClose }: Props) {
                 </button>
               </div>
 
-              <button
-                type="button"
-                className="aiboard-run-btn"
-                onClick={run}
-                disabled={!selectedTask || busy}
-              >
-                {busy ? (
-                  <>
-                    <Loader2 size={14} className="mcp-spin" /> Working…
-                  </>
-                ) : (
-                  <>
-                    <Sparkles size={14} /> Run {mode}
-                  </>
-                )}
-              </button>
+              {mode !== "chat" && (
+                <button
+                  type="button"
+                  className="aiboard-run-btn"
+                  onClick={run}
+                  disabled={!selectedTask || busy}
+                >
+                  {busy ? (
+                    <>
+                      <Loader2 size={14} className="mcp-spin" /> Working…
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={14} /> Run {mode}
+                    </>
+                  )}
+                </button>
+              )}
             </div>
 
-            {!selectedTask && (
+            {mode === "chat" && (
+              <div className="aiboard-chat">
+                <div className="aiboard-chat-feed">
+                  {chatTurns.length === 0 && !busy && (
+                    <div className="aiboard-placeholder">
+                      <MessageSquareText size={28} />
+                      <h3>Ask the AI anything</h3>
+                      <p>
+                        Try: <em>"Summarize the open questions"</em>,{" "}
+                        <em>"Draft a project plan from the action items"</em>,{" "}
+                        or <em>"What should we tackle first?"</em>
+                      </p>
+                      <p className="aiboard-hint" style={{ marginTop: 14 }}>
+                        The AI sees every task on this canvas and the room
+                        participants, so it can ground answers in your work.
+                      </p>
+                    </div>
+                  )}
+                  {chatTurns.map((turn, idx) => (
+                    <div
+                      key={`${turn.ts}-${idx}`}
+                      className={`aiboard-chat-turn ${turn.role}`}
+                    >
+                      <div className="aiboard-chat-avatar">
+                        {turn.role === "user" ? "You" : "AI"}
+                      </div>
+                      <div className="aiboard-chat-bubble">
+                        {turn.role === "assistant" ? (
+                          <div
+                            className="aiboard-markdown"
+                            // eslint-disable-next-line react/no-danger
+                            dangerouslySetInnerHTML={{ __html: markdownToHTML(turn.content) }}
+                          />
+                        ) : (
+                          <p>{turn.content}</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {busy && (
+                    <div className="aiboard-chat-turn assistant">
+                      <div className="aiboard-chat-avatar">AI</div>
+                      <div className="aiboard-chat-bubble thinking">
+                        <Loader2 size={14} className="mcp-spin" /> Thinking…
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <form
+                  className="aiboard-chat-input"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void sendChat();
+                  }}
+                >
+                  <textarea
+                    placeholder="Tell the AI what to do — e.g. 'Group these stickies into themes' or 'Draft action items for the open questions.'"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void sendChat();
+                      }
+                    }}
+                    disabled={busy}
+                    rows={2}
+                  />
+                  <button
+                    type="submit"
+                    className="aiboard-chat-send"
+                    disabled={busy || !chatInput.trim()}
+                    title="Send (Enter)"
+                  >
+                    {busy ? <Loader2 size={16} className="mcp-spin" /> : <Send size={16} />}
+                  </button>
+                </form>
+                {chatTurns.length > 0 && !busy && (
+                  <button
+                    type="button"
+                    className="aiboard-chat-reset"
+                    onClick={() => setChatTurns([])}
+                  >
+                    Start a new conversation
+                  </button>
+                )}
+              </div>
+            )}
+
+            {mode !== "chat" && !selectedTask && (
               <div className="aiboard-placeholder">
                 <Sparkles size={28} />
                 <h3>Pick a task on the left</h3>
@@ -331,7 +485,7 @@ export function AIBoard({ editor, roomId, open, onClose }: Props) {
               </div>
             )}
 
-            {selectedTask && !result && !busy && (
+            {mode !== "chat" && selectedTask && !result && !busy && (
               <div className="aiboard-target">
                 <div className="aiboard-target-head">
                   <span className={`aiboard-task-intent intent-${selectedTask.intent}`}>
@@ -350,14 +504,14 @@ export function AIBoard({ editor, roomId, open, onClose }: Props) {
               </div>
             )}
 
-            {busy && (
+            {mode !== "chat" && busy && (
               <div className="aiboard-loading">
                 <Loader2 size={28} className="mcp-spin" />
                 <p>Thinking… contacting the AI service.</p>
               </div>
             )}
 
-            {!busy && result && (
+            {mode !== "chat" && !busy && result && result.mode !== "chat" && (
               <div className="aiboard-result">
                 <div className="aiboard-result-head">
                   <h3>
@@ -419,16 +573,19 @@ export function AIBoard({ editor, roomId, open, onClose }: Props) {
                         type="button"
                         className={result?.id === h.id ? "active" : ""}
                         onClick={() => {
-                          setResult(h);
-                          setSelected(h.taskId);
                           setMode(h.mode);
+                          if (h.mode === "chat") return;
+                          setResult(h);
+                          if (h.taskId) setSelected(h.taskId);
                         }}
                       >
                         <span className={`aiboard-history-mode ${h.mode}`}>
                           {h.mode === "explain" ? (
                             <Sparkles size={11} />
-                          ) : (
+                          ) : h.mode === "diagram" ? (
                             <GitBranch size={11} />
+                          ) : (
+                            <MessageSquareText size={11} />
                           )}
                           {h.mode}
                         </span>
@@ -449,7 +606,7 @@ export function AIBoard({ editor, roomId, open, onClose }: Props) {
   );
 }
 
-/** Topbar entry-point button. Renders only for Lead users with MCP configured. */
+/** Topbar entry-point button. Lead-only; non-Leads don't see the button at all. */
 export function AIBoardButton({
   isLead,
   configured,
@@ -467,7 +624,7 @@ export function AIBoardButton({
       onClick={configured ? onClick : undefined}
       title={
         configured
-          ? "Open the AI Board to explain tasks or generate diagrams"
+          ? "Open the AI Board to chat with the AI, explain tasks, or generate diagrams"
           : "AI features are not configured. Set DO_AI_* env vars on the server."
       }
       disabled={!configured}

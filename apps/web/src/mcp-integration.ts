@@ -29,8 +29,16 @@ export interface MCPDiagram {
   model?: string;
 }
 
+export interface MCPChatReply {
+  reply: string;
+  generatedAt: string;
+  model?: string;
+  tokensUsed?: number;
+}
+
 const EXPLAIN_TIMEOUT_MS = 15_000;
 const DIAGRAM_TIMEOUT_MS = 20_000;
+const CHAT_TIMEOUT_MS = 20_000;
 
 export type MCPErrorCode =
   | "config_missing"
@@ -164,6 +172,23 @@ export async function requestDiagram(
     "/api/mcp/diagram",
     { taskId, roomId, diagramType },
     DIAGRAM_TIMEOUT_MS,
+  );
+}
+
+export interface ChatHistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export async function requestChat(
+  roomId: string,
+  prompt: string,
+  history: ChatHistoryMessage[] = [],
+): Promise<MCPChatReply> {
+  return postJson<MCPChatReply>(
+    "/api/mcp/chat",
+    { roomId, prompt, history },
+    CHAT_TIMEOUT_MS,
   );
 }
 

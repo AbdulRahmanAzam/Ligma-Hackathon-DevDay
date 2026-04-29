@@ -16,7 +16,8 @@ import { authorizeLeadInRoom } from "../mcp/auth.js";
 import { extractTaskContext } from "../mcp/context-extractor.js";
 import { AIExplainer } from "../mcp/explainer.js";
 import { DiagramGenerator } from "../mcp/diagram.js";
-import { DOApiError } from "../mcp/do-api-client.js";
+import { DOApiError, callChatCompletion } from "../mcp/do-api-client.js";
+import { db } from "../db/sqlite.js";
 import type {
   DiagramRequest,
   DiagramResponse,
@@ -34,6 +35,16 @@ interface ErrorBody {
 
 function send(reply: FastifyReply, status: number, body: ErrorBody) {
   return reply.code(status).send(body);
+}
+
+function flattenRichText(node: unknown): string {
+  if (!node) return "";
+  if (typeof node === "string") return node;
+  if (typeof node !== "object") return "";
+  const obj = node as Record<string, unknown>;
+  if (typeof obj.text === "string") return obj.text;
+  if (Array.isArray(obj.content)) return obj.content.map(flattenRichText).join(" ");
+  return "";
 }
 
 function configError(reply: FastifyReply): FastifyReply {
@@ -362,6 +373,158 @@ export function registerMCPRoutes(app: FastifyInstance): void {
       }
     },
   );
+
+  // ------------------------------------------------------------------ /chat
+  // Free-form chat where the Lead can ask the AI anything, with the room's
+  // canvas tasks attached as context so the model can refer to them.
+  app.post<{
+    Body: {
+      roomId: string;
+      prompt: string;
+      history?: Array<{ role: "user" | "assistant"; content: string }>;
+    };
+  }>("/api/mcp/chat", async (req, reply) => {
+    const startedAt = Date.now();
+    const route = "/api/mcp/chat";
+    const body = (req.body ?? {}) as Partial<{
+      roomId: string;
+      prompt: string;
+      history: Array<{ role: "user" | "assistant"; content: string }>;
+    }>;
+
+    if (!body.roomId || typeof body.roomId !== "string") {
+      return send(reply, 400, {
+        error: "Bad Request",
+        message: "roomId is required and must be a string.",
+      });
+    }
+    if (!body.prompt || typeof body.prompt !== "string" || !body.prompt.trim()) {
+      return send(reply, 400, {
+        error: "Bad Request",
+        message: "prompt is required and must be a non-empty string.",
+      });
+    }
+
+    const auth = await authorizeLeadInRoom(req, body.roomId, route);
+    if (!auth.ok) {
+      return send(reply, auth.status, {
+        error: auth.status === 401 ? "Unauthorized" : "Forbidden",
+        message: auth.message,
+        reason: auth.reason,
+      });
+    }
+
+    if (!mcp.isConfigured()) {
+      return configError(reply);
+    }
+
+    mcp.recordMetric("explanationRequests");
+    const limit = mcp.getRateLimiter().recordRequest(auth.claims.sub);
+    if (!limit.allowed) {
+      mcp.recordMetric("rateLimitViolations");
+      reply.header("retry-after", String(limit.retryAfterSec));
+      return send(reply, 429, {
+        error: "Too Many Requests",
+        message: `Too many AI requests. Try again in ${limit.retryAfterSec}s.`,
+        retryAfter: limit.retryAfterSec,
+      });
+    }
+
+    // ----- gather room context for grounding
+    let roomContext = "";
+    try {
+      const room = db
+        .prepare(`SELECT name FROM rooms WHERE room_id = ?`)
+        .get(body.roomId) as { name: string } | undefined;
+      const shapes = db
+        .prepare(`SELECT shape FROM shapes WHERE room_id = ? LIMIT 60`)
+        .all(body.roomId) as Array<{ shape: string }>;
+      const taskLines: string[] = [];
+      for (const r of shapes) {
+        try {
+          const s = JSON.parse(r.shape) as {
+            props?: { text?: string; richText?: unknown };
+            meta?: { intent?: string; authorName?: string };
+          };
+          let text = "";
+          const propText = s.props?.text;
+          if (typeof propText === "string" && propText.trim()) text = propText.trim();
+          else {
+            const flat = flattenRichText(s.props?.richText).trim();
+            if (flat) text = flat;
+          }
+          if (!text) continue;
+          const intent = s.meta?.intent ?? "note";
+          const author = s.meta?.authorName ?? "?";
+          taskLines.push(`- [${String(intent).toUpperCase()}] "${text}" — ${author}`);
+        } catch {
+          /* ignore */
+        }
+      }
+      const head = `Room: "${room?.name ?? body.roomId}"`;
+      const list = taskLines.slice(0, 40).join("\n");
+      roomContext = `${head}\nCanvas tasks (${taskLines.length}):\n${list || "(none yet)"}`;
+    } catch {
+      roomContext = `Room: "${body.roomId}"`;
+    }
+
+    const systemPrompt = `You are Ligma's whiteboard AI assistant. You help a Lead user reason about their team's collaborative whiteboard.
+- You can answer questions, summarize discussions, propose action items, draft decisions, or generate Mermaid diagrams when asked.
+- When listing items, use clean markdown.
+- Refer to the canvas tasks below when relevant. Stay concise and concrete.
+- If the user asks for a diagram, output a valid Mermaid block fenced with \`\`\`mermaid.
+
+CONTEXT
+${roomContext}`;
+
+    const history = (body.history ?? [])
+      .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+      .slice(-10);
+
+    try {
+      mcp.recordMetric("doApiCalls");
+      const cfg = mcp.getConfig();
+      const res = await callChatCompletion({
+        endpoint: cfg.endpoint,
+        apiKey: cfg.apiKey,
+        model: cfg.model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...history.map((m) => ({ role: m.role, content: m.content })),
+          { role: "user", content: body.prompt },
+        ],
+        temperature: 0.5,
+        max_tokens: 1500,
+      });
+      const content = res.choices?.[0]?.message?.content?.trim() ?? "";
+      if (!content) {
+        return send(reply, 502, {
+          error: "Bad Gateway",
+          message: "The AI returned an empty reply.",
+        });
+      }
+      mcp.recordMetric("explanationSuccess");
+      mcp.recordDuration(Date.now() - startedAt);
+      return reply.code(200).send({
+        reply: content,
+        generatedAt: new Date().toISOString(),
+        model: res.model || cfg.model,
+        tokensUsed: res.usage?.total_tokens ?? 0,
+      });
+    } catch (err) {
+      mcp.recordMetric("explanationError");
+      if (err instanceof DOApiError) {
+        const m = mapDOError(err, "explanation");
+        return send(reply, m.status, m.body);
+      }
+      return send(reply, 500, {
+        error: "Internal Server Error",
+        message: `Failed to generate reply: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      });
+    }
+  });
 
   // ----------------------------- cache invalidation hook (used internally)
   app.post<{ Body: { roomId: string; taskId?: string } }>(

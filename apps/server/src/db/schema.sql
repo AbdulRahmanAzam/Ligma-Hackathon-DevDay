@@ -1,4 +1,13 @@
 -- LIGMA backend schema — adapted to his frontend's wire protocol.
+--
+-- Dual-model design decision:
+--   • events  — immutable, append-only audit log of every accepted mutation.
+--     Enables timeline replay, undo history, and regulatory audit trail.
+--   • shapes  — denormalized snapshot of current shape state per room.
+--     Enables fast sync-welcome: new / reconnecting clients receive the
+--     current state in a single query instead of replaying the entire event log
+--     from seq=0 (which grows unbounded over a session's lifetime).
+--
 -- Source of truth is the events table; shapes is a denormalized snapshot
 -- so sync-welcome can ship the current state without replaying from seq=0.
 

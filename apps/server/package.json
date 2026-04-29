@@ -6,8 +6,8 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json && mkdir -p dist/db && cp src/db/schema.sql dist/db/schema.sql",
-    "build:vercel": "tsc -p tsconfig.json && mkdir -p dist/db && cp src/db/schema.sql dist/db/schema.sql",
+    "build": "tsc -p tsconfig.json && node -e \"const fs=require('fs');fs.mkdirSync('dist/db',{recursive:true});fs.copyFileSync('src/db/schema.sql','dist/db/schema.sql')\"",
+    "build:vercel": "tsc -p tsconfig.json && node -e \"const fs=require('fs');fs.mkdirSync('dist/db',{recursive:true});fs.copyFileSync('src/db/schema.sql','dist/db/schema.sql')\"",
     "start": "node dist/index.js",
     "seed": "tsx src/scripts/seed-demo-room.ts",
     "lint": "echo skip"

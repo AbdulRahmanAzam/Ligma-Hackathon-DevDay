@@ -58,6 +58,79 @@ function lockedReason(shape: TLShape): string {
     : `Locked to ${locked.join(", ")}`;
 }
 
+// ---------------------------------------------------------------------------
+// Conflict Resolution Strategy: Property-Level Merge
+// When concurrent edits modify different properties of the same shape,
+// we merge at the property level rather than replacing the entire shape.
+// Same-property conflicts use last-writer-wins with sequence ordering.
+// This is conceptually similar to a CRDT register per property.
+// ---------------------------------------------------------------------------
+
+/**
+ * Deep-merge `patch` into `target`, returning a new object.
+ * For plain objects, recurse; for everything else (arrays, primitives) the
+ * patch value wins (last-writer-wins at the leaf level).
+ */
+function deepMerge<T extends Record<string, unknown>>(target: T, patch: Record<string, unknown>): T {
+  const result: Record<string, unknown> = { ...target };
+  for (const key of Object.keys(patch)) {
+    const tVal = (target as Record<string, unknown>)[key];
+    const pVal = patch[key];
+    if (
+      pVal !== null &&
+      typeof pVal === "object" &&
+      !Array.isArray(pVal) &&
+      tVal !== null &&
+      typeof tVal === "object" &&
+      !Array.isArray(tVal)
+    ) {
+      result[key] = deepMerge(tVal as Record<string, unknown>, pVal as Record<string, unknown>);
+    } else {
+      result[key] = pVal;
+    }
+  }
+  return result as T;
+}
+
+/**
+ * Given the previous shape (`prev`) and the desired next shape (`next`),
+ * compute the set of top-level and nested properties that actually changed.
+ * Returns an object containing only the changed keys (with their `next` values).
+ */
+function computeChangedProps(prev: TLShape, next: TLShape): Record<string, unknown> {
+  const changed: Record<string, unknown> = {};
+  for (const key of Object.keys(next)) {
+    if (key === "id" || key === "typeName") continue; // identity keys — never "change"
+    const pVal = (prev as Record<string, unknown>)[key];
+    const nVal = (next as Record<string, unknown>)[key];
+    // Fast-path: reference equality means no change
+    if (pVal === nVal) continue;
+    // Structural comparison via JSON (safe for the JSON-serialisable TLShape data)
+    if (JSON.stringify(pVal) !== JSON.stringify(nVal)) {
+      changed[key] = nVal;
+    }
+  }
+  return changed;
+}
+
+/**
+ * Merge an incoming update into the server's authoritative shape.
+ * Only the properties that the client actually changed (diff of prev→next)
+ * are applied to `serverShape`, so concurrent edits to *different* properties
+ * by different users are preserved.
+ */
+function mergeShape(serverShape: TLShape, prev: TLShape | null, next: TLShape): TLShape {
+  // If there is no prev (client sent bare shape instead of [prev, next] tuple),
+  // or no server shape to merge against, fall back to full replacement.
+  if (!prev) return next;
+
+  const changedProps = computeChangedProps(prev, next);
+  // Nothing actually changed — return server state as-is.
+  if (Object.keys(changedProps).length === 0) return serverShape;
+
+  return deepMerge(serverShape, changedProps);
+}
+
 /** Privileged check: lock-set changes require Lead. */
 function isLockChange(prev: TLShape | null, next: TLShape): boolean {
   const prevLocks = prev ? lockedRoles(prev) : [];
@@ -149,7 +222,11 @@ export function validateAndApplyDelta(
 
   // UPDATED — RBAC against the *previous* server-state record. Lock-set
   // changes additionally require Lead.
+  // Property-level merge: only the properties the client actually changed
+  // (diffed from the prev→next pair) are applied to the server's current
+  // shape, so concurrent edits to different properties both survive.
   for (const entry of Object.values(delta.updated)) {
+    const prev = Array.isArray(entry) ? entry[0] : null;
     const next = Array.isArray(entry) ? entry[1] : (entry as TLShape);
     if (!isShapeRecord(next)) continue;
     const stored = getShape(roomId, next.id);
@@ -162,18 +239,22 @@ export function validateAndApplyDelta(
       rejected.push({ id: next.id, reason: "Lock changes require Lead" });
       continue;
     }
+
+    // Property-level merge: apply only changed fields to the server shape.
+    const merged = stored ? mergeShape(stored, prev, next) : next;
+
     const seq = nextSeq(roomId);
     const ev = makeEvent({
       operation: "updated",
-      shape: next,
+      shape: merged,
       authorName: client.name,
       authorRole: client.role,
       seq,
       cursor: cursorPayload,
     });
     persistEvent(roomId, ev);
-    persistShape(roomId, next, seq);
-    acceptedDelta.updated[next.id] = stored ? [stored, next] : next;
+    persistShape(roomId, merged, seq);
+    acceptedDelta.updated[next.id] = stored ? [stored, merged] : merged;
     events.push(ev);
   }
 

@@ -202,6 +202,7 @@ type SocketMessage =
   | { rejected?: { id: string; reason: string }[]; type: 'mutation-rejected' }
   | { color: string; name: string; role: UserRole; sessionId: string; type: 'presence-cursor'; x: number; y: number }
   | { color?: string; name?: string; phase: 'join' | 'leave'; role?: UserRole; sessionId: string; type: 'presence-user' }
+  | { sessionId: string; type: 'presence-cursor-leave' }
   | { senderSessionId: string; type: 'yjs-update'; update?: number[] }
 
 type ReplayFrame = {
@@ -489,9 +490,56 @@ function isSyncDeltaEmpty(delta: SyncDelta) {
   return !Object.keys(delta.added).length && !Object.keys(delta.updated).length && !Object.keys(delta.removed).length
 }
 
+// Client-side property merge: only apply properties that changed in the remote delta.
+// This preserves local edits to other properties during concurrent editing.
 function applyShapeDelta(editor: Editor, delta: SyncDelta) {
+  const mergedDelta: SyncDelta = {
+    added: delta.added,
+    removed: delta.removed,
+    updated: {},
+  }
+
+  for (const [id, [prev, next]] of Object.entries(delta.updated)) {
+    const local = editor.getShape(id as TLShapeId)
+    if (!local) {
+      // Shape doesn't exist locally — treat as add
+      mergedDelta.added[id] = next
+      continue
+    }
+
+    // Deep-merge only the fields that actually changed between prev and next
+    const merged = { ...local } as Record<string, unknown>
+    for (const key of Object.keys(next)) {
+      if (key === 'id' || key === 'type' || key === 'typeName') continue
+      const prevVal = (prev as unknown as Record<string, unknown>)[key]
+      const nextVal = (next as unknown as Record<string, unknown>)[key]
+
+      // Only apply if this field actually changed in the remote delta
+      if (JSON.stringify(prevVal) === JSON.stringify(nextVal)) continue
+
+      if (
+        key === 'props' || key === 'meta'
+      ) {
+        // Merge sub-object properties individually
+        const localSub = (local as unknown as Record<string, unknown>)[key] as Record<string, unknown> | undefined
+        const nextSub = nextVal as Record<string, unknown>
+        const prevSub = (prevVal ?? {}) as Record<string, unknown>
+        const mergedSub = { ...(localSub ?? {}) }
+        for (const subKey of Object.keys(nextSub)) {
+          if (JSON.stringify(prevSub[subKey]) !== JSON.stringify(nextSub[subKey])) {
+            mergedSub[subKey] = nextSub[subKey]
+          }
+        }
+        merged[key] = mergedSub
+      } else {
+        merged[key] = nextVal
+      }
+    }
+    mergedDelta.updated[id] = [local, merged as unknown as TLShape]
+  }
+
   editor.store.mergeRemoteChanges(() => {
-    editor.store.applyDiff(delta as unknown as StoreDiff, { runCallbacks: true })
+    editor.store.applyDiff(mergedDelta as unknown as StoreDiff, { runCallbacks: true })
   })
 }
 
@@ -1190,6 +1238,17 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
               y: message.y,
             },
           }))
+          return
+        }
+
+        // Instant cursor cleanup when a user explicitly leaves
+        if (message.type === 'presence-cursor-leave') {
+          if (message.sessionId === presenceSessionId) return
+          setPresenceCursors((currentCursors) => {
+            const next = { ...currentCursors }
+            delete next[message.sessionId]
+            return next
+          })
           return
         }
 
@@ -2010,6 +2069,14 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
             user={tldrawUser}
           />
 
+          {/* Empty canvas onboarding hint */}
+          {stats.nodeCount === 0 && !isReplayMode && (
+            <div className="empty-canvas-hint" aria-live="polite">
+              <StickyNote size={20} aria-hidden="true" />
+              <p>Double-click to add a sticky note, or use the toolbar to start brainstorming</p>
+            </div>
+          )}
+
           <MCPPanel
             editor={editor}
             roomId={roomId}
@@ -2616,7 +2683,8 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
                   >
                     <div className="event-timeline-time">
                       <Clock size={11} aria-hidden="true" />
-                      {formatTime(event.at)}
+                      <span>{formatTime(event.at)}</span>
+                      <span className="event-relative-time">{formatTimestamp(event.at)}</span>
                     </div>
                     <div className={`event-timeline-op ${event.operation}`}>{event.operation}</div>
                     <div className="event-timeline-label">{event.label}</div>
