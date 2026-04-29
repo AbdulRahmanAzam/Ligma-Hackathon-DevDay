@@ -20,6 +20,7 @@ import {
 import * as Y from 'yjs'
 import {
   Activity,
+  BrainCircuit,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -28,11 +29,13 @@ import {
   ClipboardList,
   Copy,
   Diamond,
+  Download,
   Eye,
   FileText,
   Gauge,
   Hand,
   Link2,
+  Loader2,
   LockKeyhole,
   MessageSquareText,
   MousePointer2,
@@ -56,6 +59,21 @@ import type { LucideIcon } from 'lucide-react'
 import 'tldraw/tldraw.css'
 import './App.css'
 import { InviteModal } from './InviteModal'
+import { requestAiSummary } from './auth-api'
+import {
+  classifyIntentAI,
+  classifyIntentRegex,
+  clearIntentCache,
+  isModelReady,
+  preloadModel,
+  type IntentResult,
+} from './ai-intent'
+import {
+  buildSummaryData,
+  copyToClipboard,
+  downloadMarkdown,
+  formatSummaryMarkdown,
+} from './ai-summary'
 
 type UserRole = 'Lead' | 'Contributor' | 'Viewer'
 type Intent = 'action' | 'decision' | 'question' | 'reference'
@@ -420,22 +438,15 @@ function getShapeText(editor: Editor, shape: TLShape) {
   }
 }
 
-function classifyIntent(text: string): Intent {
-  const lowerText = text.toLowerCase()
-
-  if (/\b(todo|action|assign|owner|follow up|next step|ship|build|fix|create|implement)\b/.test(lowerText)) {
-    return 'action'
+/** Synchronous intent classification — reads from AI cache if available, else regex fallback. */
+function classifyIntent(text: string, aiCache?: Map<string, IntentResult>): Intent {
+  if (aiCache) {
+    const cacheKey = text.trim().toLowerCase()
+    const cached = aiCache.get(cacheKey)
+    if (cached) return cached.intent
   }
-
-  if (/\b(decision|decided|approved|chosen|final|agree|agreed)\b/.test(lowerText)) {
-    return 'decision'
-  }
-
-  if (text.includes('?') || /\b(question|unknown|open|clarify|risk)\b/.test(lowerText)) {
-    return 'question'
-  }
-
-  return 'reference'
+  // Regex fallback (instant)
+  return classifyIntentRegex(text).intent
 }
 
 function getShapeDeltaFromChanges(changes: StoreDiff): SyncDelta {
@@ -502,7 +513,7 @@ function applyDeltaToShapeList(shapes: TLShape[], delta: SyncDelta): TLShape[] {
   return Array.from(byId.values())
 }
 
-function buildCanvasSnapshot(editor: Editor, events: CanvasEvent[]) {
+function buildCanvasSnapshot(editor: Editor, events: CanvasEvent[], aiCache?: Map<string, IntentResult>) {
   const shapes = editor.getCurrentPageShapes()
   const tasks: CanvasTask[] = []
   const badges: CanvasIntentBadge[] = []
@@ -536,7 +547,7 @@ function buildCanvasSnapshot(editor: Editor, events: CanvasEvent[]) {
       continue
     }
 
-    const intent = classifyIntent(text)
+    const intent = classifyIntent(text, aiCache)
 
     if (bounds) {
       const badgePoint = editor.pageToViewport({ x: bounds.x + bounds.w - 18, y: bounds.y - 10 })
@@ -697,6 +708,11 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   const [isReplayMode, setIsReplayMode] = useState(false)
   const [isReplayPlaying, setIsReplayPlaying] = useState(false)
   const [replaySpeed, setReplaySpeed] = useState(1)
+  const [aiModelStatus, setAiModelStatus] = useState<'loading' | 'ready' | 'failed'>('loading')
+  const [aiModelProgress, setAiModelProgress] = useState(0)
+  const [summaryContent, setSummaryContent] = useState('')
+  const [showSummaryModal, setShowSummaryModal] = useState(false)
+  const [summaryGenerating, setSummaryGenerating] = useState(false)
   const canvasStageRef = useRef<HTMLDivElement | null>(null)
   const editorRef = useRef<Editor | null>(null)
   const eventsRef = useRef<CanvasEvent[]>([])
@@ -717,6 +733,8 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   const snapshotTimerRef = useRef<number | null>(null)
   const badgeRafRef = useRef<number | null>(null)
   const eventListRef = useRef<HTMLDivElement | null>(null)
+  const aiCacheRef = useRef<Map<string, IntentResult>>(new Map())
+  const aiClassifyTimerRef = useRef<number | null>(null)
   const presenceSessionId = useMemo(() => safeRandomUUID(), [])
   // Refs for values read inside the WS effect without causing reconnects (G5 fix)
   const userRoleRef = useRef(userRole)
@@ -748,6 +766,26 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   useEffect(() => { userRoleRef.current = userRole }, [userRole])
   useEffect(() => { userNameRef.current = userName }, [userName])
   useEffect(() => { userColorRef.current = userColor }, [userColor])
+
+  // Preload AI model on mount (downloads once, cached in IndexedDB)
+  useEffect(() => {
+    preloadModel((info) => {
+      if (info.status === 'progress' || info.status === 'download') {
+        setAiModelProgress(Math.round(info.progress))
+      }
+    })
+      .then(() => {
+        setAiModelStatus(isModelReady() ? 'ready' : 'failed')
+        // If model loaded and editor is ready, re-run classification
+        if (isModelReady() && editorRef.current) {
+          const snap = buildCanvasSnapshot(editorRef.current, eventsRef.current, aiCacheRef.current)
+          setStats(snap.stats)
+          setIntentBadges(snap.badges)
+          setLockBadges(snap.locks)
+        }
+      })
+      .catch(() => setAiModelStatus('failed'))
+  }, [])
 
   const sendSocketMessage = useCallback((message: Record<string, unknown>) => {
     const socket = socketRef.current
@@ -786,12 +824,48 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
 
   const refreshCanvasSnapshot = useCallback(
     (activeEditor: Editor, shouldPublishTasks = true) => {
-      const snapshot = buildCanvasSnapshot(activeEditor, eventsRef.current)
+      const snapshot = buildCanvasSnapshot(activeEditor, eventsRef.current, aiCacheRef.current)
       setStats(snapshot.stats)
       setIntentBadges(snapshot.badges)
       setLockBadges(snapshot.locks)
       if (shouldPublishTasks && !isReplayModeRef.current) {
         publishTasksToYjs(snapshot.tasks)
+      }
+
+      // Queue async AI classification for shapes that might need reclassification
+      if (isModelReady() && !isReplayModeRef.current) {
+        if (aiClassifyTimerRef.current) window.clearTimeout(aiClassifyTimerRef.current)
+        aiClassifyTimerRef.current = window.setTimeout(() => {
+          aiClassifyTimerRef.current = null
+          const shapes = activeEditor.getCurrentPageShapes()
+          let needsRefresh = false
+          const promises: Promise<void>[] = []
+          for (const shape of shapes) {
+            const text = getShapeText(activeEditor, shape)
+            if (!text || text.trim().length < 3) continue
+            const cacheKey = text.trim().toLowerCase()
+            if (aiCacheRef.current.has(cacheKey)) continue
+            promises.push(
+              classifyIntentAI(text).then((result) => {
+                aiCacheRef.current.set(cacheKey, result)
+                needsRefresh = true
+              }),
+            )
+          }
+          if (promises.length > 0) {
+            Promise.all(promises).then(() => {
+              if (needsRefresh && editorRef.current) {
+                const snap = buildCanvasSnapshot(editorRef.current, eventsRef.current, aiCacheRef.current)
+                setStats(snap.stats)
+                setIntentBadges(snap.badges)
+                setLockBadges(snap.locks)
+                if (shouldPublishTasks && !isReplayModeRef.current) {
+                  publishTasksToYjs(snap.tasks)
+                }
+              }
+            })
+          }
+        }, 300)
       }
     },
     [publishTasksToYjs],
@@ -1384,6 +1458,8 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
     replayShapeMapRef.current = new Map()
     replayLiveSnapshotRef.current = null
     lastEventSeqRef.current = 0
+    clearIntentCache()
+    aiCacheRef.current = new Map()
   }, [roomInput, taskArray, taskDoc])
 
   const copyRoomLink = useCallback(async () => {
@@ -1418,6 +1494,63 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
     setShareLabel(ok ? 'Copied' : 'Copy failed — select URL manually')
     window.setTimeout(() => setShareLabel('Copy room link'), ok ? 1200 : 2400)
   }, [])
+
+  const generateAISummary = useCallback(async () => {
+    if (!editor) return
+    setSummaryGenerating(true)
+    try {
+      const shapes = editor.getCurrentPageShapes()
+      const classifiedNodes: Array<{
+        id: string
+        text: string
+        intentResult: IntentResult
+        authorName: string
+        authorRole: string
+        createdAt: string
+      }> = []
+
+      for (const shape of shapes) {
+        const text = getShapeText(editor, shape)
+        if (!text || text.trim().length < 3) continue
+        const nodeMeta = readNodeMeta(shape)
+        const result = await classifyIntentAI(text)
+        classifiedNodes.push({
+          id: shape.id,
+          text: text.length > 200 ? `${text.slice(0, 197)}...` : text,
+          intentResult: result,
+          authorName: nodeMeta?.authorName ?? 'Unknown',
+          authorRole: nodeMeta?.authorRole ?? 'Viewer',
+          createdAt: nodeMeta?.createdAt ?? new Date().toISOString(),
+        })
+      }
+
+      const participants = Object.values(activeUsers).map((u) => ({
+        name: u.name,
+        role: u.role,
+        color: u.color,
+      }))
+
+      const summaryData = buildSummaryData({ roomId, nodes: classifiedNodes, participants })
+      let markdown = ''
+      try {
+        const response = await requestAiSummary(summaryData)
+        markdown = typeof response.markdown === 'string' && response.markdown.trim()
+          ? response.markdown
+          : ''
+      } catch (err) {
+        console.warn('[ai-summary] AI summary failed, using local formatter:', err)
+      }
+      if (!markdown) {
+        markdown = formatSummaryMarkdown(summaryData)
+      }
+      setSummaryContent(markdown)
+      setShowSummaryModal(true)
+    } catch (err) {
+      console.error('[ai-summary] Failed to generate summary:', err)
+    } finally {
+      setSummaryGenerating(false)
+    }
+  }, [editor, roomId, activeUsers])
 
   const setTool = useCallback(
     (toolId: string) => {
@@ -1600,7 +1733,6 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
     : 'No node selected'
   const activeUserList = Object.values(activeUsers)
   const cursorDisplayMap = isReplayMode ? replayCursors : presenceCursors
-  const panelEdgeOffset = isPanelCollapsed ? 74 : 360
   const currentReplayFrame = replayFrames[replayIndex]
   const firstReplayFrame = replayFrames[0]
   const lastReplayFrame = replayFrames[replayFrames.length - 1]
@@ -1608,6 +1740,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   const connectionIcon = connectionStatus === 'online' ? Wifi : WifiOff
   const ConnectionIcon = connectionStatus === 'connecting' ? Gauge : connectionIcon
   const isViewOnly = userRole === 'Viewer' || isGuest
+  const roleLabel = userRole === 'Lead' ? 'Lead' : userRole === 'Contributor' ? 'Contributor' : 'Viewer'
 
   return (
     <main className="workspace-shell">
@@ -1668,6 +1801,19 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
               <ConnectionIcon size={15} aria-hidden="true" />
               <span>{connectionStatus}</span>
             </div>
+            <div className={`ai-status-pill ${aiModelStatus}`} aria-live="polite" title={
+              aiModelStatus === 'loading' ? `AI model loading... ${aiModelProgress}%`
+                : aiModelStatus === 'ready' ? 'AI classifier ready'
+                : 'AI unavailable — using regex'
+            }>
+              {aiModelStatus === 'loading' ? (
+                <><Loader2 size={13} className="ai-spinner" aria-hidden="true" /><span>AI {aiModelProgress}%</span></>
+              ) : aiModelStatus === 'ready' ? (
+                <><BrainCircuit size={13} aria-hidden="true" /><span>AI</span></>
+              ) : (
+                <><BrainCircuit size={13} aria-hidden="true" /><span>Regex</span></>
+              )}
+            </div>
             <label className="name-field">
               <Users size={16} aria-hidden="true" />
               <input value={userName} aria-label="User name" onChange={(event) => setUserName(event.target.value)} />
@@ -1683,20 +1829,10 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
                 />
               ))}
             </div>
-            {!isGuest && (
-              <div className="segmented" aria-label="Role">
-                {ROLES.map((role) => (
-                  <button
-                    className={role === userRole ? 'active' : ''}
-                    key={role}
-                    type="button"
-                    onClick={() => setUserRole(role)}
-                  >
-                    {role}
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="role-pill" aria-label="Your role">
+              <ShieldAlert size={14} aria-hidden="true" />
+              <span>Role: {roleLabel}</span>
+            </div>
             {isViewOnly && (
               <div className="view-only-pill" aria-live="polite">
                 <Eye size={14} aria-hidden="true" />
@@ -1909,7 +2045,6 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
           title={isPanelCollapsed ? 'Open panel' : 'Collapse panel'}
           aria-label={isPanelCollapsed ? 'Open panel' : 'Collapse panel'}
           onClick={() => setIsPanelCollapsed((isCollapsed) => !isCollapsed)}
-          style={{ right: panelEdgeOffset - 12 }}
         >
           {isPanelCollapsed ? <ChevronLeft size={16} aria-hidden="true" /> : <ChevronRight size={16} aria-hidden="true" />}
         </button>
@@ -1976,6 +2111,10 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
             <div className="section-heading">
               <Sparkles size={16} aria-hidden="true" />
               <h2>Task Board</h2>
+              <span className="ai-powered-badge" title={aiModelStatus === 'ready' ? 'Classified by AI' : 'Classified by regex'}>
+                <BrainCircuit size={10} aria-hidden="true" />
+                {aiModelStatus === 'ready' ? 'AI-powered' : 'Regex'}
+              </span>
               {connectionStatus === 'online' && (
                 <span className="live-sync-dot" title="Synced live across all users">
                   <span className="live-sync-pulse" />
@@ -2004,6 +2143,26 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
                 <p className="empty-state">No action items yet</p>
               )}
             </div>
+          </section>
+
+          <section className="panel-section ai-summary-section">
+            <div className="section-heading">
+              <BrainCircuit size={16} aria-hidden="true" />
+              <h2>AI Summary</h2>
+            </div>
+            <button
+              className="summary-export-button"
+              type="button"
+              onClick={generateAISummary}
+              disabled={summaryGenerating || isReplayMode}
+            >
+              {summaryGenerating ? (
+                <><Loader2 size={15} className="ai-spinner" aria-hidden="true" /><span>Generating...</span></>
+              ) : (
+                <><Download size={15} aria-hidden="true" /><span>Export AI Summary</span></>
+              )}
+            </button>
+            <p className="summary-hint">One-click structured brief of your brainstorm</p>
           </section>
 
           <section className="panel-section event-log">
@@ -2040,6 +2199,46 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
       </section>
       {showInvite && (
         <InviteModal room_id={roomId} onClose={() => setShowInvite(false)} />
+      )}
+      {showSummaryModal && (
+        <div className="summary-modal-overlay" onClick={() => setShowSummaryModal(false)}>
+          <div className="summary-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="summary-modal-header">
+              <div className="summary-modal-title">
+                <BrainCircuit size={20} aria-hidden="true" />
+                <h2>AI Summary Export</h2>
+              </div>
+              <button className="summary-modal-close" type="button" onClick={() => setShowSummaryModal(false)}>
+                <X size={16} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="summary-modal-actions">
+              <button
+                type="button"
+                className="summary-action-button"
+                onClick={async () => {
+                  const ok = await copyToClipboard(summaryContent)
+                  if (ok) {
+                    const btn = document.querySelector('.summary-action-button') as HTMLElement
+                    if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = ''; }, 1200) }
+                  }
+                }}
+              >
+                <Copy size={15} aria-hidden="true" />
+                <span>Copy to clipboard</span>
+              </button>
+              <button
+                type="button"
+                className="summary-action-button"
+                onClick={() => downloadMarkdown(summaryContent, `ligma-summary-${roomId}.md`)}
+              >
+                <Download size={15} aria-hidden="true" />
+                <span>Download .md</span>
+              </button>
+            </div>
+            <pre className="summary-modal-content">{summaryContent}</pre>
+          </div>
+        </div>
       )}
       {roomError && (
         <div

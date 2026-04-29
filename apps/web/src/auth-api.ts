@@ -1,5 +1,7 @@
 /** Tiny API helper module shared by Login + Home + room flows. */
 
+import type { SummaryData } from "./ai-summary";
+
 export interface SessionUser {
   user_id: string;
   display: string;
@@ -198,4 +200,16 @@ export async function revokeInvite(room_id: string, token: string): Promise<void
     `/api/rooms/${encodeURIComponent(room_id)}/invites/${encodeURIComponent(token)}`,
     { method: "DELETE", auth: true },
   );
+}
+
+// --- ai summary ---
+
+export async function requestAiSummary(
+  summary: SummaryData,
+): Promise<{ markdown: string }> {
+  return jsonFetch("/api/ai/summary", {
+    method: "POST",
+    auth: true,
+    body: JSON.stringify({ summary }),
+  });
 }

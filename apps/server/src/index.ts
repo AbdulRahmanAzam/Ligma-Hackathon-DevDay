@@ -1,3 +1,4 @@
+import { config as loadEnv } from "dotenv";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import fStatic from "@fastify/static";
@@ -6,12 +7,16 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { db } from "./db/sqlite.js";
 import { registerAuthRoutes } from "./api/auth-routes.js";
+import { registerAiSummaryRoutes } from "./api/ai-summary.js";
 import { registerRoomRoutes } from "./api/rooms.js";
 import { attachWs } from "./ws/gateway.js";
 import { totalRooms } from "./room/registry.js";
 import { seed } from "./scripts/seed-demo-room.js";
 
 void db; // ensure schema runs on import
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+loadEnv({ path: resolve(__dirname, "../.env") });
 
 const PORT = Number(process.env.PORT ?? 10000);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -22,6 +27,7 @@ const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 await app.register(cors, { origin: true, credentials: true });
 
 registerAuthRoutes(app);
+registerAiSummaryRoutes(app);
 registerRoomRoutes(app);
 
 app.get("/healthz", async () => ({
@@ -36,7 +42,6 @@ app.get("/health", async () => ({ ok: true, rooms: totalRooms() }));
 app.get("/readyz", async () => ({ ok: true }));
 
 // Serve the built web bundle. Resolve relative to runtime location.
-const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB_DIR_CANDIDATES = [
   resolve(__dirname, "../../web/dist"),
   resolve(__dirname, "../../../web/dist"),

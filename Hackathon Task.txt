@@ -103,3 +103,221 @@ demo on any criterion marked with a curl / DevTools / tab-switching test action.
 • Stage 1 (Architecture Presentation) scores feed into Category 5. Teams that
 plan well and articulate their choices clearly earn the uniqueness points even if
 their implementation is incomplete.
+
+06 Evaluation Rubric
+Point Distribution Overview
+Category Real-Time
+Collab
+
+Core
+Features Architecture UI /
+
+UX Innovation TOTAL
+
+Max Pts 25 25 20 15 15 100
+
+Detailed Scoring Criteria
+Criterion Pts ✅ Full Marks ❌ Zero Marks
+
+CATEGORY 1
+
+Real-Time Collaboration & Conflict Resolution // 25 pts
+
+Multi-user
+canvas sync
+10
+Open two browser tabs with
+different user sessions. Draw a
+shape in Tab A — it appears in
+Tab B within a reasonable
+
+period.
+
+Changes in Tab A are only
+visible in Tab B after a manual
+reload, or never appear at all.
+
+Conflict
+resolution 10
+
+Both users type in the same
+text node simultaneously. Both
+tabs show identical merged
+text. README explains
+strategy.
+
+One user's text silently
+overwrites the other's, or
+README has no explanation
+of conflict handling.
+
+Cursor
+presence
+5
+Each connected user's cursor
+is visible on all other screens,
+labelled, updating smoothly.
+
+No cursor presence, or
+cursors delay more than 2
+seconds.
+
+6
+CATEGORY 2
+
+Core Feature Implementation // 25 pts
+
+AI intent
+extraction 10
+
+Type an action item. Within 3
+seconds, Task Board shows
+new task with author and link
+automatically.
+
+Task creation requires
+manual click, no task
+appears, or Task Board
+panel is absent.
+
+Task Board
+integration 8
+
+Task Board is live for all users.
+Clicking a task scrolls canvas
+to the originating node.
+
+Task Board requires
+reload to update, or
+tasks have no link back
+to the canvas node.
+
+Node-level
+RBAC 7
+
+Viewer edit is blocked in UI and
+on server (WebSocket error).
+Live role demotion takes effect
+without reload.
+
+RBAC enforced only in
+UI (WebSocket bypass
+possible), or permissions
+require reload.
+
+CATEGORY 3
+
+Technical Architecture & Code Quality // 20 pts
+
+Event-sourced
+arch 8
+
+Mutations stored as immutable
+events with timestamp/ID.
+Deleting a node inserts an
+event; doesn't remove history.
+
+Mutations overwrite state
+in place. No event log.
+State cannot be
+reconstructed from
+history.
+
+API design &
+quality 7
+
+REST/GraphQL returns
+structured JSON. Codebase
+has clear separation of
+concerns (routes, services,
+
+data).
+
+Logic in a single file,
+inconsistent structures,
+or endpoints fail outside
+the browser.
+
+README & docs 5
+
+Contains architecture
+diagram/description and
+explanation of technical
+
+choices (CRDT, Event-
+sourcing).
+
+No README, or it is a
+default scaffold template
+with no project-specific
+content.
+
+7
+CATEGORY 4
+UI / UX // 15 pts
+
+Canvas usability 8
+
+User can add/move sticky
+notes, connect nodes, and
+assign tags without
+explanation.
+
+Core interactions require
+explanation; controls are
+hidden behind unlabelled
+
+icons.
+
+Responsiveness 4
+
+Canvas and Task Board are
+functional/readable. No
+horizontal scrollbar on the main
+
+layout.
+
+Layout breaks, overlaps,
+or key controls are cut
+off and unreachable at
+standard widths.
+
+Visual
+consistency 3
+
+Consistent palette, font
+hierarchy, and spacing.
+
+Conflicting font sizes,
+mismatched button
+styles, or unstyled
+default browser
+elements.
+
+CATEGORY 5
+
+Innovation & Creativity // 15 pts
+
+Bonus feature 8
+
+One creative feature is fully
+functional and demoed live (not
+just a UI mockup).
+
+Feature shown only as
+static screenshot, a
+disabled button, or
+crashes during demo.
+
+Approach
+uniqueness 7
+
+Team articulates non-obvious
+architectural decisions with
+clear reasoning during Stage 1.
+
+Team cannot explain
+technical choices;
+codebase is a scaffold
+with no unique design
+decisions.
