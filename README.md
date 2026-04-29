@@ -19,11 +19,11 @@ the WebSocket sync (`/ligma-sync`). SQLite handles persistence.
 
 ## Run it locally
 
-Requires **Node 20+** and **pnpm**.
+Requires **Node 20+** and **npm**.
 
 ```bash
-pnpm install
-pnpm dev
+npm install
+npm run dev
 ```
 
 - Client: http://localhost:5173 (Vite, proxies `/api` and `/ligma-sync` → server)
@@ -34,7 +34,7 @@ Sign up with any email + password, create a whiteboard, invite collaborators.
 ### Windows note
 
 `better-sqlite3` and `argon2` need a C++ toolchain. Install Visual Studio
-Build Tools (Desktop development with C++) once, then `pnpm install`.
+Build Tools (Desktop development with C++) once, then `npm install`.
 
 ## Roles
 
@@ -51,7 +51,7 @@ Build the workspace and copy `apps/web/dist` and `apps/server/dist` to the
 target host; `apps/server/dist/db/schema.sql` must travel with the JS.
 
 ```bash
-pnpm -r build
+npm run -ws build
 ```
 
 ## Hackathon brief

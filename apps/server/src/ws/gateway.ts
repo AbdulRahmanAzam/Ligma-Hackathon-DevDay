@@ -241,6 +241,34 @@ function onConnection(ws: WebSocket, auth: ConnectionAuth): void {
       );
       return;
     }
+
+    if (msg.type === "role-update") {
+      // Live role change: re-compute the effective role using roleMin so the
+      // client can self-demote but never self-elevate past the server assignment.
+      const serverRole: Role =
+        auth.kind === "guest"
+          ? auth.forcedRole
+          : getRoleInRoom(userId, roomId) ?? "Viewer";
+      const newRole = roleMin(serverRole, sanitizeRole(msg.role));
+      session.role = newRole;
+      if (msg.name) session.name = msg.name.slice(0, 80);
+      if (msg.color) session.color = msg.color;
+
+      // Broadcast the updated presence so all clients see the new role
+      broadcast(
+        roomId,
+        {
+          type: "presence-user",
+          phase: "join",
+          sessionId: session.sessionId,
+          name: session.name,
+          color: session.color,
+          role: session.role,
+        },
+        session.sessionId,
+      );
+      return;
+    }
   });
 
   ws.on("close", () => {

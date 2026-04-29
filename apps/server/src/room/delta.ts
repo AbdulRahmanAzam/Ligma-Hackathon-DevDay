@@ -46,6 +46,7 @@ function lockedRoles(shape: TLShape): Role[] {
 }
 
 function canMutate(shape: TLShape, role: Role): boolean {
+  if (shape.type === "draw") return role !== "Viewer";
   const locked = lockedRoles(shape);
   return locked.length === 0 || locked.includes(role);
 }

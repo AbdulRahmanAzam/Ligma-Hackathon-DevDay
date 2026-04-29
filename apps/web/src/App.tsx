@@ -20,12 +20,15 @@ import {
 import * as Y from 'yjs'
 import {
   Activity,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Circle,
   ClipboardList,
   Copy,
   Diamond,
+  Eye,
   FileText,
   Gauge,
   Hand,
@@ -36,6 +39,7 @@ import {
   Pause,
   PenLine,
   Play,
+  ShieldAlert,
   Share2,
   Sparkles,
   Square,
@@ -87,6 +91,13 @@ type CanvasTask = {
 
 type CanvasIntentBadge = {
   intent: Intent
+  label: string
+  nodeId: TLShapeId
+  x: number
+  y: number
+}
+
+type CanvasLockBadge = {
   label: string
   nodeId: TLShapeId
   x: number
@@ -360,6 +371,7 @@ function withNodeMeta(shape: TLShape, nextMeta: Partial<LigmaNodeMeta>) {
 }
 
 function canMutateShape(shape: TLShape, role: UserRole) {
+  if (shape.type === 'draw') return role !== 'Viewer'
   const nodeMeta = readNodeMeta(shape)
   return !nodeMeta?.lockedToRoles.length || nodeMeta.lockedToRoles.includes(role)
 }
@@ -464,6 +476,7 @@ function buildCanvasSnapshot(editor: Editor, events: CanvasEvent[]) {
   const shapes = editor.getCurrentPageShapes()
   const tasks: CanvasTask[] = []
   const badges: CanvasIntentBadge[] = []
+  const locks: CanvasLockBadge[] = []
   const seenShapeIds = new Set<TLShapeId>()
   let actionCount = 0
   let decisionCount = 0
@@ -473,6 +486,20 @@ function buildCanvasSnapshot(editor: Editor, events: CanvasEvent[]) {
     if (seenShapeIds.has(shape.id)) continue
     seenShapeIds.add(shape.id)
 
+    const nodeMeta = readNodeMeta(shape)
+    const bounds = editor.getShapePageBounds(shape.id)
+
+    // Lock badges — show on ALL locked shapes regardless of text content
+    if (nodeMeta?.lockedToRoles?.length && bounds) {
+      const lockPoint = editor.pageToViewport({ x: bounds.x, y: bounds.y + bounds.h - 6 })
+      locks.push({
+        label: `🔒 ${nodeMeta.lockedToRoles.join(', ')}`,
+        nodeId: shape.id,
+        x: lockPoint.x,
+        y: lockPoint.y,
+      })
+    }
+
     const text = getShapeText(editor, shape)
 
     if (!text) {
@@ -480,8 +507,6 @@ function buildCanvasSnapshot(editor: Editor, events: CanvasEvent[]) {
     }
 
     const intent = classifyIntent(text)
-    const nodeMeta = readNodeMeta(shape)
-    const bounds = editor.getShapePageBounds(shape.id)
 
     if (bounds) {
       const badgePoint = editor.pageToViewport({ x: bounds.x + bounds.w - 18, y: bounds.y - 10 })
@@ -512,6 +537,7 @@ function buildCanvasSnapshot(editor: Editor, events: CanvasEvent[]) {
 
   return {
     badges,
+    locks,
     stats: {
       actionCount,
       decisionCount,
@@ -526,6 +552,24 @@ function buildCanvasSnapshot(editor: Editor, events: CanvasEvent[]) {
 
 function formatTime(value: string) {
   return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+/** Smart timestamp: shows relative time for recent events, full date otherwise. */
+function formatTimestamp(value: string) {
+  const date = new Date(value)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffSec = Math.floor(diffMs / 1000)
+  const diffMin = Math.floor(diffSec / 60)
+  const diffHr = Math.floor(diffMin / 60)
+
+  if (diffSec < 60) return 'just now'
+  if (diffMin < 60) return `${diffMin}m ago`
+  if (diffHr < 24 && date.getDate() === now.getDate()) return `${diffHr}h ago`
+
+  // Different day — show short date + time
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
+    date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
 function tasksFingerprint(tasks: CanvasTask[]) {
@@ -604,12 +648,15 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   const [events, setEvents] = useState<CanvasEvent[]>([])
   const [tasks, setTasks] = useState<CanvasTask[]>([])
   const [intentBadges, setIntentBadges] = useState<CanvasIntentBadge[]>([])
+  const [lockBadges, setLockBadges] = useState<CanvasLockBadge[]>([])
   const [stats, setStats] = useState<CanvasStats>(EMPTY_STATS)
   const [shareLabel, setShareLabel] = useState('Copy room link')
   const [guardLabel, setGuardLabel] = useState('Node access ready')
+  const [guardFlash, setGuardFlash] = useState(false)
   const [presenceCursors, setPresenceCursors] = useState<Record<string, PresenceCursor>>({})
   const [activeUsers, setActiveUsers] = useState<Record<string, ActiveUser>>({})
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false)
+  const [isEditBarVisible, setIsEditBarVisible] = useState(true)
   const [highlightedNodeId, setHighlightedNodeId] = useState<TLShapeId | null>(null)
   const [onboardingStep, setOnboardingStep] = useState(() =>
     window.localStorage.getItem('ligma.onboardingComplete') === 'true' ? onboardingSteps.length : 0,
@@ -635,7 +682,12 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   // Timer refs for debouncing expensive operations during high-frequency store updates
   const snapshotTimerRef = useRef<number | null>(null)
   const badgeRafRef = useRef<number | null>(null)
+  const eventListRef = useRef<HTMLDivElement | null>(null)
   const presenceSessionId = useMemo(() => safeRandomUUID(), [])
+  // Refs for values read inside the WS effect without causing reconnects (G5 fix)
+  const userRoleRef = useRef(userRole)
+  const userNameRef = useRef(userName)
+  const userColorRef = useRef(userColor)
   const taskDoc = useMemo(() => new Y.Doc(), [])
   const taskArray = useMemo(() => taskDoc.getArray<CanvasTask>('tasks'), [taskDoc])
 
@@ -657,12 +709,34 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
     isReplayModeRef.current = isReplayMode
   }, [isReplayMode])
 
+  // Keep refs in sync with latest state — these are read from WS handlers
+  // without being in the WS useEffect dependency array (G5 fix).
+  useEffect(() => { userRoleRef.current = userRole }, [userRole])
+  useEffect(() => { userNameRef.current = userName }, [userName])
+  useEffect(() => { userColorRef.current = userColor }, [userColor])
+
   const sendSocketMessage = useCallback((message: Record<string, unknown>) => {
     const socket = socketRef.current
     if (socket?.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify(message))
     }
   }, [])
+
+  // G5: Send role-update WS message when role/name/color changes (no reconnect).
+  // Runs after initial mount — the hello message already carries the initial values.
+  const roleUpdateMountedRef = useRef(false)
+  useEffect(() => {
+    if (!roleUpdateMountedRef.current) {
+      roleUpdateMountedRef.current = true
+      return
+    }
+    sendSocketMessage({
+      type: 'role-update',
+      role: userRole,
+      name: userName,
+      color: userColor,
+    })
+  }, [userRole, userName, userColor, sendSocketMessage])
 
   const publishTasksToYjs = useCallback((nextTasks: CanvasTask[]) => {
     const projectedTasks = dedupeCanvasTasks(nextTasks)
@@ -681,6 +755,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
       const snapshot = buildCanvasSnapshot(activeEditor, eventsRef.current)
       setStats(snapshot.stats)
       setIntentBadges(snapshot.badges)
+      setLockBadges(snapshot.locks)
       if (shouldPublishTasks && !isReplayModeRef.current) {
         publishTasksToYjs(snapshot.tasks)
       }
@@ -787,6 +862,13 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
     return () => taskArray.unobserve(syncTaskState)
   }, [taskArray])
 
+  // G10: Auto-scroll event log to newest entry when events change
+  useEffect(() => {
+    if (eventListRef.current) {
+      eventListRef.current.scrollTop = 0
+    }
+  }, [events])
+
   useEffect(() => {
     const handleYjsUpdate = (update: Uint8Array, origin: unknown) => {
       if (origin === REMOTE_YJS_ORIGIN) return
@@ -810,10 +892,10 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
       socket.addEventListener('open', () => {
         setConnectionStatus('online')
         sendSocketMessage({
-          color: userColor,
+          color: userColorRef.current,
           lastEventSeq: lastEventSeqRef.current,
-          name: userName,
-          role: userRole,
+          name: userNameRef.current,
+          role: userRoleRef.current,
           roomId,
           sessionId: presenceSessionId,
           type: 'hello',
@@ -871,6 +953,9 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
 
         if (message.type === 'mutation-rejected') {
           setGuardLabel(message.rejected?.map((item) => item.reason).join(' / ') || 'Mutation rejected')
+          // G4: Flash animation to draw attention to the rejection
+          setGuardFlash(true)
+          window.setTimeout(() => setGuardFlash(false), 1200)
           return
         }
 
@@ -939,7 +1024,10 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
       socketRef.current?.close()
       socketRef.current = null
     }
-  }, [appendEvents, applyWelcome, presenceSessionId, refreshCanvasSnapshot, roomId, sendSocketMessage, taskDoc, userColor, userName, userRole])
+  // G5: userRole, userName, userColor removed from deps — read from refs inside
+  // the effect so changing role/name/color does NOT cause WS reconnect.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appendEvents, applyWelcome, presenceSessionId, refreshCanvasSnapshot, roomId, sendSocketMessage, taskDoc])
 
   useEffect(() => {
     if (!editor || !pendingWelcomeRef.current) return
@@ -1010,6 +1098,15 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
               return pt.x === badge.x && pt.y === badge.y ? badge : { ...badge, x: pt.x, y: pt.y }
             })
           })
+          setLockBadges((prev) => {
+            if (!prev.length) return prev
+            return prev.map((lock) => {
+              const bounds = editor.getShapePageBounds(lock.nodeId)
+              if (!bounds) return lock
+              const pt = editor.pageToViewport({ x: bounds.x, y: bounds.y + bounds.h - 6 })
+              return pt.x === lock.x && pt.y === lock.y ? lock : { ...lock, x: pt.x, y: pt.y }
+            })
+          })
         })
       },
       { scope: 'session', source: 'all' },
@@ -1030,6 +1127,13 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
       if (source !== 'user') return shape
       if (isReplayModeRef.current) {
         setGuardLabel('Replay preview is read-only')
+        return shape
+      }
+      // G1: Block Viewer from creating any shapes client-side
+      if (userRole === 'Viewer') {
+        setGuardLabel('Viewers cannot create nodes')
+        setGuardFlash(true)
+        window.setTimeout(() => setGuardFlash(false), 1200)
         return shape
       }
 
@@ -1200,6 +1304,13 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   const createNode = useCallback(
     (type: 'action-note' | 'decision-shape' | 'question-text') => {
       if (!editor || isReplayMode) return
+      // G2: Block Viewer from using create-node helpers
+      if (userRole === 'Viewer') {
+        setGuardLabel('Viewers cannot create nodes')
+        setGuardFlash(true)
+        window.setTimeout(() => setGuardFlash(false), 1200)
+        return
+      }
 
       const viewport = editor.getViewportPageBounds()
       const xPosition = viewport.x + viewport.w / 2 - 130
@@ -1256,6 +1367,13 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   const lockSelectedNodes = useCallback(
     (role: UserRole) => {
       if (!editor || isReplayMode) return
+      // G3: Only Lead can change lock state
+      if (userRole !== 'Lead') {
+        setGuardLabel('Only Lead can change locks')
+        setGuardFlash(true)
+        window.setTimeout(() => setGuardFlash(false), 1200)
+        return
+      }
 
       const selectedShapes = editor.getSelectedShapes()
       editor.updateShapes(
@@ -1268,11 +1386,18 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
       setGuardLabel(`Locked to ${role}`)
       refreshCanvasSnapshot(editor)
     },
-    [editor, isReplayMode, refreshCanvasSnapshot],
+    [editor, isReplayMode, refreshCanvasSnapshot, userRole],
   )
 
   const unlockSelectedNodes = useCallback(() => {
     if (!editor || isReplayMode) return
+    // G3: Only Lead can change lock state
+    if (userRole !== 'Lead') {
+      setGuardLabel('Only Lead can change locks')
+      setGuardFlash(true)
+      window.setTimeout(() => setGuardFlash(false), 1200)
+      return
+    }
 
     const selectedShapes = editor.getSelectedShapes()
     editor.updateShapes(
@@ -1284,7 +1409,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
     )
     setGuardLabel('Unlocked selection')
     refreshCanvasSnapshot(editor)
-  }, [editor, isReplayMode, refreshCanvasSnapshot])
+  }, [editor, isReplayMode, refreshCanvasSnapshot, userRole])
 
   const previewReplayFrame = useCallback(
     (frameIndex: number) => {
@@ -1303,6 +1428,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
       const snapshot = buildCanvasSnapshot(editor, eventsRef.current)
       setStats(snapshot.stats)
       setIntentBadges(snapshot.badges)
+      setLockBadges(snapshot.locks)
     },
     [editor, replayFrames],
   )
@@ -1337,99 +1463,108 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
     : 'No node selected'
   const activeUserList = Object.values(activeUsers)
   const currentReplayFrame = replayFrames[replayIndex]
+  const firstReplayFrame = replayFrames[0]
+  const lastReplayFrame = replayFrames[replayFrames.length - 1]
   const visibleOnboardingStep = onboardingStep < onboardingSteps.length ? onboardingSteps[onboardingStep] : null
   const connectionIcon = connectionStatus === 'online' ? Wifi : WifiOff
   const ConnectionIcon = connectionStatus === 'connecting' ? Gauge : connectionIcon
+  const isViewOnly = userRole === 'Viewer' || isGuest
 
   return (
     <main className="workspace-shell">
       <header className="topbar">
-        {onBackToHome && (
-          <button
-            type="button"
-            onClick={onBackToHome}
-            className="ghost-button"
-            title="Back to whiteboards"
-            style={{ marginRight: 6 }}
-          >
-            <ChevronLeft size={16} aria-hidden="true" />
-            <span>Rooms</span>
-          </button>
-        )}
-        <div className="brand-lockup" aria-label="Ligma workspace">
-          <span className="brand-mark">L</span>
-          <div>
-            <h1>Ligma</h1>
-            <p>Live ideation to execution</p>
-          </div>
-        </div>
-
-        <div className="room-controls">
-          <label className="room-field">
-            <Link2 size={16} aria-hidden="true" />
-            <input
-              value={roomInput}
-              aria-label="Room id"
-              onChange={(event) => setRoomInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') applyRoomChange()
-              }}
-            />
-          </label>
-          <button className="icon-button" type="button" title="Join room" onClick={applyRoomChange}>
-            <Share2 size={17} aria-hidden="true" />
-          </button>
-          <button className="ghost-button" type="button" title={shareLabel} onClick={copyRoomLink}>
-            <Copy size={16} aria-hidden="true" />
-            <span>{shareLabel}</span>
-          </button>
-          {userRole === 'Lead' && (
-            <button
-              className="ghost-button"
-              type="button"
-              title="Create invite link"
-              onClick={() => setShowInvite(true)}
-            >
-              <Users size={16} aria-hidden="true" />
-              <span>Invite</span>
+        <div className="topbar-left">
+          {onBackToHome && (
+            <button type="button" onClick={onBackToHome} className="ghost-button" title="Back to whiteboards">
+              <ChevronLeft size={16} aria-hidden="true" />
+              <span>Rooms</span>
             </button>
           )}
+          <div className="brand-lockup" aria-label="Ligma workspace">
+            <span className="brand-mark">L</span>
+            <div>
+              <h1>Ligma</h1>
+              <p>Live ideation to execution</p>
+            </div>
+          </div>
         </div>
 
-        <div className="identity-controls">
-          <div className={`connection-pill ${connectionStatus}`} aria-live="polite">
-            <ConnectionIcon size={15} aria-hidden="true" />
-            <span>{connectionStatus}</span>
-          </div>
-          <label className="name-field">
-            <Users size={16} aria-hidden="true" />
-            <input value={userName} aria-label="User name" onChange={(event) => setUserName(event.target.value)} />
-          </label>
-          <div className="swatches" aria-label="Cursor color">
-            {USER_COLORS.map((color, colorIndex) => (
-              <button
-                className={`swatch swatch-${colorIndex} ${color === userColor ? 'active' : ''}`}
-                key={color}
-                title={color}
-                type="button"
-                onClick={() => setUserColor(color)}
+        <div className="topbar-center">
+          <div className="room-controls">
+            <label className="room-field">
+              <Link2 size={16} aria-hidden="true" />
+              <input
+                value={roomInput}
+                aria-label="Room id"
+                onChange={(event) => setRoomInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') applyRoomChange()
+                }}
               />
-            ))}
+            </label>
+            <button className="icon-button" type="button" title="Join room" onClick={applyRoomChange}>
+              <Share2 size={17} aria-hidden="true" />
+            </button>
+            <button className="ghost-button" type="button" title={shareLabel} onClick={copyRoomLink}>
+              <Copy size={16} aria-hidden="true" />
+              <span>{shareLabel}</span>
+            </button>
+            {userRole === 'Lead' && (
+              <button
+                className="ghost-button"
+                type="button"
+                title="Create invite link"
+                onClick={() => setShowInvite(true)}
+              >
+                <Users size={16} aria-hidden="true" />
+                <span>Invite</span>
+              </button>
+            )}
           </div>
-          {!isGuest && (
-            <div className="segmented" aria-label="Role">
-              {ROLES.map((role) => (
+        </div>
+
+        <div className="topbar-right">
+          <div className="identity-controls">
+            <div className={`connection-pill ${connectionStatus}`} aria-live="polite">
+              <ConnectionIcon size={15} aria-hidden="true" />
+              <span>{connectionStatus}</span>
+            </div>
+            <label className="name-field">
+              <Users size={16} aria-hidden="true" />
+              <input value={userName} aria-label="User name" onChange={(event) => setUserName(event.target.value)} />
+            </label>
+            <div className="swatches" aria-label="Cursor color">
+              {USER_COLORS.map((color, colorIndex) => (
                 <button
-                  className={role === userRole ? 'active' : ''}
-                  key={role}
+                  className={`swatch swatch-${colorIndex} ${color === userColor ? 'active' : ''}`}
+                  key={color}
+                  title={color}
                   type="button"
-                  onClick={() => setUserRole(role)}
-                >
-                  {role}
-                </button>
+                  onClick={() => setUserColor(color)}
+                />
               ))}
             </div>
-          )}
+            {!isGuest && (
+              <div className="segmented" aria-label="Role">
+                {ROLES.map((role) => (
+                  <button
+                    className={role === userRole ? 'active' : ''}
+                    key={role}
+                    type="button"
+                    onClick={() => setUserRole(role)}
+                  >
+                    {role}
+                  </button>
+                ))}
+              </div>
+            )}
+            {isViewOnly && (
+              <div className="view-only-pill" aria-live="polite">
+                <Eye size={14} aria-hidden="true" />
+                <span>View Only</span>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -1437,22 +1572,35 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
         <aside className="left-rail" aria-label="Canvas tools">
           <ToolButton icon={MousePointer2} label="Select" onClick={() => setTool('select')} />
           <ToolButton icon={Hand} label="Pan" onClick={() => setTool('hand')} />
-          <ToolButton icon={StickyNote} label="Sticky" onClick={() => createNode('action-note')} />
-          <ToolButton icon={PenLine} label="Draw" onClick={() => setTool('draw')} />
-          <ToolButton icon={Square} label="Shape" onClick={() => setTool('geo')} />
-          <ToolButton icon={Type} label="Text" onClick={() => setTool('text')} />
+          <ToolButton icon={StickyNote} label="Sticky" onClick={() => createNode('action-note')} disabled={isViewOnly} />
+          <ToolButton icon={PenLine} label="Draw" onClick={() => setTool('draw')} disabled={isViewOnly} />
+          <ToolButton icon={Square} label="Shape" onClick={() => setTool('geo')} disabled={isViewOnly} />
+          <ToolButton icon={Type} label="Text" onClick={() => setTool('text')} disabled={isViewOnly} />
           <div className="rail-divider" />
-          <ToolButton icon={ClipboardList} label="Action node" onClick={() => createNode('action-note')} />
-          <ToolButton icon={Diamond} label="Decision node" onClick={() => createNode('decision-shape')} />
-          <ToolButton icon={MessageSquareText} label="Question node" onClick={() => createNode('question-text')} />
+          <ToolButton icon={ClipboardList} label="Action node" onClick={() => createNode('action-note')} disabled={isViewOnly} />
+          <ToolButton icon={Diamond} label="Decision node" onClick={() => createNode('decision-shape')} disabled={isViewOnly} />
+          <ToolButton icon={MessageSquareText} label="Question node" onClick={() => createNode('question-text')} disabled={isViewOnly} />
+          <div className="rail-divider" />
+          <ToolButton
+            icon={isEditBarVisible ? ChevronDown : ChevronUp}
+            label={isEditBarVisible ? 'Hide edit bar' : 'Show edit bar'}
+            onClick={() => setIsEditBarVisible((visible) => !visible)}
+          />
         </aside>
 
-        <div className="canvas-stage" ref={canvasStageRef}>
+        <div className={`canvas-stage ${isEditBarVisible ? '' : 'editbar-hidden'}`} ref={canvasStageRef}>
           <div className="canvas-status" aria-live="polite">
             <span className={`status-dot ${connectionStatus}`} />
             <span>{connectionStatus === 'online' ? 'custom websocket' : connectionStatus}</span>
             <span>{roomId}</span>
           </div>
+
+          {isViewOnly && (
+            <div className="view-only-banner" aria-live="polite">
+              <ShieldAlert size={16} aria-hidden="true" />
+              <span>Read-only mode — you are viewing as <strong>{isGuest ? 'Guest' : userRole}</strong></span>
+            </div>
+          )}
           <Tldraw
             autoFocus
             inferDarkMode={false}
@@ -1500,6 +1648,23 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
           </AnimatePresence>
 
           <AnimatePresence>
+            {lockBadges.map((lock, lockIndex) => (
+              <motion.div
+                animate={{ opacity: 1, y: 0 }}
+                className="lock-badge"
+                exit={{ opacity: 0, y: 4 }}
+                initial={{ opacity: 0, y: 4 }}
+                key={`lock-${lock.nodeId}-${lockIndex}`}
+                style={{ left: lock.x, top: lock.y }}
+                title={lock.label}
+                transition={{ duration: 0.3 }}
+              >
+                {lock.label}
+              </motion.div>
+            ))}
+          </AnimatePresence>
+
+          <AnimatePresence>
             {highlightedNodeId && (
               <motion.div
                 animate={{ opacity: [0, 1, 0], scale: [0.86, 1.18, 1.45] }}
@@ -1518,15 +1683,23 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
               <span>{replayFrames.length} events</span>
               <small>{currentReplayFrame ? `${formatTime(currentReplayFrame.at)} / ${currentReplayFrame.label}` : 'Live canvas'}</small>
             </div>
-            <input
-              aria-label="Replay timeline"
-              disabled={!replayFrames.length}
-              max={Math.max(0, replayFrames.length - 1)}
-              min={0}
-              onChange={(event) => previewReplayFrame(Number(event.target.value))}
-              type="range"
-              value={Math.min(replayIndex, Math.max(0, replayFrames.length - 1))}
-            />
+            <div className="replay-scrubber-wrap">
+              <input
+                aria-label="Replay timeline"
+                disabled={!replayFrames.length}
+                max={Math.max(0, replayFrames.length - 1)}
+                min={0}
+                onChange={(event) => previewReplayFrame(Number(event.target.value))}
+                type="range"
+                value={Math.min(replayIndex, Math.max(0, replayFrames.length - 1))}
+              />
+              {replayFrames.length > 1 && (
+                <div className="replay-range-labels">
+                  <span>{firstReplayFrame ? formatTime(firstReplayFrame.at) : ''}</span>
+                  <span>{lastReplayFrame ? formatTime(lastReplayFrame.at) : ''}</span>
+                </div>
+              )}
+            </div>
             <div className="replay-controls">
               <button type="button" title="Play replay" onClick={() => setIsReplayPlaying((isPlaying) => !isPlaying)}>
                 {isReplayPlaying ? <Pause size={15} aria-hidden="true" /> : <Play size={15} aria-hidden="true" />}
@@ -1548,6 +1721,17 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
               )}
             </div>
           </section>
+
+          {isEditBarVisible && (
+            <button
+              className="editbar-close"
+              type="button"
+              title="Hide edit bar"
+              onClick={() => setIsEditBarVisible(false)}
+            >
+              <X size={14} aria-hidden="true" />
+            </button>
+          )}
 
           <AnimatePresence>
             {visibleOnboardingStep && (
@@ -1584,7 +1768,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
           <section className="panel-section panel-toggle-section">
             <button className="panel-toggle" type="button" onClick={() => setIsPanelCollapsed((isCollapsed) => !isCollapsed)}>
               {isPanelCollapsed ? <ChevronLeft size={16} aria-hidden="true" /> : <ChevronRight size={16} aria-hidden="true" />}
-              <span>{isPanelCollapsed ? stats.actionCount : 'Collapse panel'}</span>
+              <span>{isPanelCollapsed ? `${tasks.length} tasks · ${events.length} events` : 'Collapse panel'}</span>
             </button>
           </section>
 
@@ -1615,31 +1799,39 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
               <h2>Node</h2>
             </div>
             <p className="node-id">{selectedNodeLabel}</p>
-            <div className="lock-controls">
-              <button type="button" onClick={() => lockSelectedNodes('Lead')} disabled={!stats.selectedNodeIds.length || isReplayMode}>
-                <LockKeyhole size={15} aria-hidden="true" />
-                <span>Lead</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => lockSelectedNodes('Contributor')}
-                disabled={!stats.selectedNodeIds.length || isReplayMode}
-              >
-                <LockKeyhole size={15} aria-hidden="true" />
-                <span>Contributor</span>
-              </button>
-              <button type="button" onClick={unlockSelectedNodes} disabled={!stats.selectedNodeIds.length || isReplayMode}>
-                <UnlockKeyhole size={15} aria-hidden="true" />
-                <span>Unlock</span>
-              </button>
-            </div>
-            <small>{guardLabel}</small>
+            {userRole === 'Lead' && (
+              <div className="lock-controls">
+                <button type="button" onClick={() => lockSelectedNodes('Lead')} disabled={!stats.selectedNodeIds.length || isReplayMode}>
+                  <LockKeyhole size={15} aria-hidden="true" />
+                  <span>Lead</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => lockSelectedNodes('Contributor')}
+                  disabled={!stats.selectedNodeIds.length || isReplayMode}
+                >
+                  <LockKeyhole size={15} aria-hidden="true" />
+                  <span>Contributor</span>
+                </button>
+                <button type="button" onClick={unlockSelectedNodes} disabled={!stats.selectedNodeIds.length || isReplayMode}>
+                  <UnlockKeyhole size={15} aria-hidden="true" />
+                  <span>Unlock</span>
+                </button>
+              </div>
+            )}
+            <small className={guardFlash ? 'guard-flash' : ''}>{guardLabel}</small>
           </section>
 
           <section className="panel-section task-board">
             <div className="section-heading">
               <Sparkles size={16} aria-hidden="true" />
               <h2>Task Board</h2>
+              {connectionStatus === 'online' && (
+                <span className="live-sync-dot" title="Synced live across all users">
+                  <span className="live-sync-pulse" />
+                  Live
+                </span>
+              )}
             </div>
             <div className="task-list">
               {tasks.length ? (
@@ -1654,7 +1846,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
                     <span className="task-intent">{intentCopy[task.intent]}</span>
                     <strong>{task.title}</strong>
                     <small>
-                      {task.authorName} / {task.authorRole} / {formatTime(task.createdAt)}
+                      {task.authorName} / {task.authorRole} / {formatTimestamp(task.createdAt)}
                     </small>
                   </button>
                 ))
@@ -1668,8 +1860,12 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
             <div className="section-heading">
               <Activity size={16} aria-hidden="true" />
               <h2>Event Log</h2>
+              <span className="append-only-badge" title="Events are immutable — append-only">
+                <LockKeyhole size={10} aria-hidden="true" />
+                Append-only
+              </span>
             </div>
-            <div className="event-list">
+            <div className="event-list" ref={eventListRef}>
               {events.length ? (
                 events.map((event) => (
                   <button
@@ -1718,9 +1914,9 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   )
 }
 
-function ToolButton({ icon: Icon, label, onClick }: { icon: LucideIcon; label: string; onClick: () => void }) {
+function ToolButton({ icon: Icon, label, onClick, disabled }: { icon: LucideIcon; label: string; onClick: () => void; disabled?: boolean }) {
   return (
-    <button className="tool-button" type="button" title={label} onClick={onClick}>
+    <button className="tool-button" type="button" title={label} onClick={onClick} disabled={disabled}>
       <Icon size={18} aria-hidden="true" />
       <span>{label}</span>
     </button>

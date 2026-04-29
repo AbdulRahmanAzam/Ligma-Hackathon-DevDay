@@ -51,7 +51,8 @@ export type WsClientMsg =
     }
   | { type: "canvas-delta"; delta: SyncDelta }
   | { type: "presence-cursor"; x: number; y: number }
-  | { type: "yjs-update"; update: number[] };
+  | { type: "yjs-update"; update: number[] }
+  | { type: "role-update"; role: Role; name?: string; color?: string };
 
 export type WsServerMsg =
   | {
