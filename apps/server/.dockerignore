@@ -1,0 +1,17 @@
+node_modules
+dist
+*.log
+.env
+.env.*
+!.env.example
+.git
+.github
+.vscode
+*.md
+!README.md
+coverage
+.DS_Store
+data
+*.db
+*.db-shm
+*.db-wal

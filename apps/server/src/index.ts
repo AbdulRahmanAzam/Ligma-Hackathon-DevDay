@@ -24,7 +24,23 @@ const WS_PATH = process.env.LIGMA_SYNC_PATH ?? "/ligma-sync";
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 
-await app.register(cors, { origin: true, credentials: true });
+// Allow your frontend domains
+const allowedOrigins = [
+  process.env.FRONTEND_URL || 'http://localhost:5173',
+  'https://your-vercel-app.vercel.app', // Replace with your actual Vercel URL
+];
+
+await app.register(cors, { 
+  origin: (origin, cb) => {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.some(allowed => origin.startsWith(allowed))) {
+      return cb(null, true);
+    }
+    return cb(new Error('Not allowed by CORS'), false);
+  },
+  credentials: true 
+});
 
 registerAuthRoutes(app);
 registerAiSummaryRoutes(app);

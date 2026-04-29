@@ -1,0 +1,63 @@
+# Build stage
+FROM node:20-bookworm-slim AS builder
+
+# Install corepack for pnpm
+RUN corepack enable
+
+WORKDIR /build
+
+# Copy monorepo root files
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+
+# Copy all workspace packages
+COPY packages ./packages
+COPY apps/server ./apps/server
+
+# Install all dependencies
+RUN pnpm install --frozen-lockfile
+
+# Build shared package first
+RUN pnpm --filter @ligma/shared build
+
+# Build server
+RUN pnpm --filter @ligma/server build
+
+# Production stage
+FROM node:20-bookworm-slim
+
+# Enable corepack for pnpm
+RUN corepack enable
+
+# Install sqlite3 for better-sqlite3
+RUN apt-get update && \
+    apt-get install -y sqlite3 python3 make g++ && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy monorepo structure needed for production
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/shared/package.json ./packages/shared/
+COPY apps/server/package.json ./apps/server/
+
+# Install production dependencies only
+RUN pnpm install --frozen-lockfile --prod
+
+# Copy built files from builder
+COPY --from=builder /build/packages/shared/dist ./packages/shared/dist
+COPY --from=builder /build/apps/server/dist ./apps/server/dist
+
+# Create data directory for SQLite
+RUN mkdir -p /data
+
+WORKDIR /app/apps/server
+
+# Expose port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:8080/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
+
+# Start the server
+CMD ["node", "dist/index.js"]
