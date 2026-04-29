@@ -21,6 +21,15 @@ export interface TLShape {
   [k: string]: unknown;
 }
 
+export interface CursorPayload {
+  sessionId: string;
+  name: string;
+  color: string;
+  role: Role;
+  x: number;
+  y: number;
+}
+
 export interface SyncDelta {
   added: Record<string, TLShape>;
   updated: Record<string, [TLShape, TLShape] | TLShape>;
@@ -37,6 +46,8 @@ export interface CanvasEvent {
   source: "user" | "remote";
   authorName: string;
   authorRole: Role;
+  shape?: TLShape;
+  cursor?: CursorPayload;
 }
 
 export type WsClientMsg =
@@ -49,7 +60,7 @@ export type WsClientMsg =
       role: Role;
       lastEventSeq: number;
     }
-  | { type: "canvas-delta"; delta: SyncDelta }
+  | { type: "canvas-delta"; delta: SyncDelta; cursor?: { x: number; y: number } }
   | { type: "presence-cursor"; x: number; y: number }
   | { type: "yjs-update"; update: number[] }
   | { type: "role-update"; role: Role; name?: string; color?: string };

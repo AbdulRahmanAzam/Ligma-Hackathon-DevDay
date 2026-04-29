@@ -17,4 +17,15 @@ const schemaPath = join(__dirname, "schema.sql");
 const schema = readFileSync(schemaPath, "utf8");
 db.exec(schema);
 
+// Lightweight migrations for additive columns.
+const eventColumns = new Set(
+	db.prepare("PRAGMA table_info(events)").all().map((row) => (row as { name: string }).name),
+);
+if (!eventColumns.has("shape_json")) {
+	db.exec("ALTER TABLE events ADD COLUMN shape_json TEXT");
+}
+if (!eventColumns.has("cursor_json")) {
+	db.exec("ALTER TABLE events ADD COLUMN cursor_json TEXT");
+}
+
 export type DB = BetterDB;

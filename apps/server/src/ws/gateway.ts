@@ -181,8 +181,14 @@ function onConnection(ws: WebSocket, auth: ConnectionAuth): void {
     if (msg.type === "canvas-delta") {
       const { acceptedDelta, events, rejected } = validateAndApplyDelta(
         roomId,
-        { name: session.name, role: session.role },
+        {
+          name: session.name,
+          role: session.role,
+          sessionId: session.sessionId,
+          color: session.color,
+        },
         msg.delta,
+        msg.cursor,
       );
 
       if (events.length > 0) {

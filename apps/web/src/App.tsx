@@ -104,15 +104,26 @@ type CanvasLockBadge = {
   y: number
 }
 
+type ReplayCursor = {
+  color: string
+  name: string
+  role: UserRole
+  sessionId: string
+  x: number
+  y: number
+}
+
 type CanvasEvent = {
   id: string
   at: string
   authorName: string
   authorRole: UserRole
+  cursor?: ReplayCursor
   label: string
   nodeId?: string
   operation: 'created' | 'updated' | 'deleted'
   seq: number
+  shape?: TLShape
   source: 'remote' | 'user'
 }
 
@@ -162,6 +173,7 @@ type SocketMessage =
 
 type ReplayFrame = {
   at: string
+  cursors: Record<string, ReplayCursor>
   label: string
   operation: 'created' | 'updated' | 'deleted'
   seq: number
@@ -324,6 +336,24 @@ function isRichText(value: unknown): value is TLRichText {
 
 function sanitizeRole(role: unknown): UserRole {
   return role === 'Lead' || role === 'Contributor' || role === 'Viewer' ? role : 'Viewer'
+}
+
+function sanitizeCursor(value: unknown): ReplayCursor | null {
+  if (!isRecord(value)) return null
+  const sessionId = typeof value.sessionId === 'string' ? value.sessionId : null
+  const name = typeof value.name === 'string' ? value.name : null
+  const color = typeof value.color === 'string' ? value.color : null
+  const x = typeof value.x === 'number' ? value.x : null
+  const y = typeof value.y === 'number' ? value.y : null
+  if (!sessionId || !name || !color || x === null || y === null) return null
+  return {
+    sessionId,
+    name,
+    color,
+    role: sanitizeRole(value.role),
+    x,
+    y,
+  }
 }
 
 function readNodeMeta(shape: TLShape): LigmaNodeMeta | null {
@@ -654,6 +684,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   const [guardLabel, setGuardLabel] = useState('Node access ready')
   const [guardFlash, setGuardFlash] = useState(false)
   const [presenceCursors, setPresenceCursors] = useState<Record<string, PresenceCursor>>({})
+  const [replayCursors, setReplayCursors] = useState<Record<string, ReplayCursor>>({})
   const [activeUsers, setActiveUsers] = useState<Record<string, ActiveUser>>({})
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false)
   const [isEditBarVisible, setIsEditBarVisible] = useState(true)
@@ -676,6 +707,9 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   const taskFingerprintRef = useRef('')
   // The authoritative "live" shape state, kept up to date even while user is scrubbing replay.
   const liveShapeMapRef = useRef<Map<string, TLShape>>(new Map())
+  const replayShapeMapRef = useRef<Map<string, TLShape>>(new Map())
+  const replayCursorMapRef = useRef<Record<string, ReplayCursor>>({})
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null)
   // Snapshot of live shapes captured the moment replay started; used to restore live canvas.
   const replayLiveSnapshotRef = useRef<TLShape[] | null>(null)
   const isReplayModeRef = useRef(false)
@@ -766,6 +800,16 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   const appendEvents = useCallback((incomingEvents: CanvasEvent[], liveShapesForFrame?: TLShape[] | null) => {
     if (!incomingEvents.length) return
 
+    const orderedIncoming = [...incomingEvents].sort((left, right) => left.seq - right.seq)
+    const cursorMap = { ...replayCursorMapRef.current }
+    const shapeMap = replayShapeMapRef.current
+
+    if (!shapeMap.size && liveShapesForFrame?.length) {
+      for (const shape of liveShapesForFrame) {
+        shapeMap.set(shape.id, shape)
+      }
+    }
+
     const newestSeq = Math.max(...incomingEvents.map((event) => event.seq))
     lastEventSeqRef.current = Math.max(lastEventSeqRef.current, newestSeq)
 
@@ -784,19 +828,38 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
       return nextEvents
     })
 
-    // Use the supplied live shape list (always reflects post-event live state, even when the
-    // user is scrubbing through history). Falls back to the editor when not provided.
-    const frameShapes =
-      liveShapesForFrame ?? Array.from(liveShapeMapRef.current.values())
-    const frameEvent = incomingEvents[incomingEvents.length - 1]
-    const frame: ReplayFrame = {
-      at: frameEvent.at,
-      label: frameEvent.label,
-      operation: frameEvent.operation,
-      seq: newestSeq,
-      shapes: frameShapes.map((shape) => ({ ...shape })),
+    const framesToAdd: ReplayFrame[] = []
+
+    for (const event of orderedIncoming) {
+      if (event.cursor) {
+        cursorMap[event.cursor.sessionId] = event.cursor
+      }
+
+      if (event.shape && isShapeRecord(event.shape)) {
+        if (event.operation === 'deleted') shapeMap.delete(event.shape.id)
+        else shapeMap.set(event.shape.id, event.shape)
+      }
+
+      framesToAdd.push({
+        at: event.at,
+        label: event.label,
+        operation: event.operation,
+        seq: event.seq,
+        shapes: Array.from(shapeMap.values()).map((shape) => ({ ...shape })),
+        cursors: { ...cursorMap },
+      })
     }
-    setReplayFrames((currentFrames) => [...currentFrames, frame].slice(-160))
+
+    replayCursorMapRef.current = cursorMap
+    replayShapeMapRef.current = shapeMap
+
+    setReplayFrames((currentFrames) => {
+      const nextFrames = [...currentFrames, ...framesToAdd]
+      if (!isReplayModeRef.current) {
+        setReplayIndex(Math.max(0, nextFrames.length - 1))
+      }
+      return nextFrames
+    })
   }, [])
 
   const applyWelcome = useCallback(
@@ -808,7 +871,12 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
         Y.applyUpdate(taskDoc, Uint8Array.from(message.taskUpdate), REMOTE_YJS_ORIGIN)
       }
 
-      const welcomeEvents = (message.events ?? []).map((event) => ({ ...event, authorRole: sanitizeRole(event.authorRole) }))
+      const welcomeEvents = (message.events ?? []).map((event) => ({
+        ...event,
+        authorRole: sanitizeRole(event.authorRole),
+        cursor: sanitizeCursor(event.cursor) ?? undefined,
+        shape: event.shape && isShapeRecord(event.shape) ? event.shape : undefined,
+      }))
       eventsRef.current = welcomeEvents.sort((left, right) => right.seq - left.seq)
       setEvents(eventsRef.current)
 
@@ -821,15 +889,51 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
           (message.users ?? []).map((user) => [user.sessionId, { ...user, role: sanitizeRole(user.role) }]),
         ),
       )
-      setReplayFrames([
-        {
+      const orderedEvents = [...welcomeEvents].sort((left, right) => left.seq - right.seq)
+      const cursorMap: Record<string, ReplayCursor> = {}
+      const shapeMap = new Map<string, TLShape>()
+      const frames: ReplayFrame[] = []
+
+      for (const event of orderedEvents) {
+        if (event.cursor) {
+          cursorMap[event.cursor.sessionId] = event.cursor
+        }
+
+        if (event.shape && isShapeRecord(event.shape)) {
+          if (event.operation === 'deleted') shapeMap.delete(event.shape.id)
+          else shapeMap.set(event.shape.id, event.shape)
+        }
+
+        frames.push({
+          at: event.at,
+          label: event.label,
+          operation: event.operation,
+          seq: event.seq,
+          shapes: Array.from(shapeMap.values()).map((shape) => ({ ...shape })),
+          cursors: { ...cursorMap },
+        })
+      }
+
+      if (!frames.length) {
+        const seedShapes = (message.shapes ?? []).map((shape) => ({ ...shape }))
+        frames.push({
           at: new Date(message.serverTime).toISOString(),
           label: 'Joined live room',
           operation: 'updated',
           seq: lastEventSeqRef.current,
-          shapes: (message.shapes ?? []).map((shape) => ({ ...shape })),
-        },
-      ])
+          shapes: seedShapes,
+          cursors: {},
+        })
+        replayShapeMapRef.current = new Map(seedShapes.map((shape) => [shape.id, shape]))
+        replayCursorMapRef.current = {}
+      } else {
+        replayShapeMapRef.current = shapeMap
+        replayCursorMapRef.current = cursorMap
+      }
+
+      setReplayFrames(frames)
+      setReplayIndex(Math.max(0, frames.length - 1))
+      setReplayCursors({})
       refreshCanvasSnapshot(activeEditor, false)
     },
     [refreshCanvasSnapshot, taskDoc],
@@ -943,6 +1047,8 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
           const serverEvents = (message.events ?? []).map((event) => ({
             ...event,
             authorRole: sanitizeRole(event.authorRole),
+            cursor: sanitizeCursor(event.cursor) ?? undefined,
+            shape: event.shape && isShapeRecord(event.shape) ? event.shape : undefined,
           }))
           appendEvents(serverEvents, Array.from(liveShapeMapRef.current.values()))
           if (!isReplayModeRef.current) {
@@ -1056,6 +1162,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
         x: event.clientX - stageRect.left,
         y: event.clientY - stageRect.top,
       })
+      lastPointerRef.current = pagePoint
       sendSocketMessage({
         type: 'presence-cursor',
         x: pagePoint.x,
@@ -1156,6 +1263,12 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
         setGuardLabel('Replay preview is read-only')
         return previousShape
       }
+      if (userRole === 'Viewer') {
+        setGuardLabel('Viewers cannot edit nodes')
+        setGuardFlash(true)
+        window.setTimeout(() => setGuardFlash(false), 1200)
+        return previousShape
+      }
       if (canMutateShape(previousShape, userRole)) return nextShape
 
       setGuardLabel(`Locked for ${readNodeMeta(previousShape)?.lockedToRoles.join(', ')}`)
@@ -1166,6 +1279,12 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
       if (source !== 'user') return
       if (isReplayModeRef.current) {
         setGuardLabel('Replay preview is read-only')
+        return false
+      }
+      if (userRole === 'Viewer') {
+        setGuardLabel('Viewers cannot delete nodes')
+        setGuardFlash(true)
+        window.setTimeout(() => setGuardFlash(false), 1200)
         return false
       }
       if (canMutateShape(shape, userRole)) return
@@ -1182,7 +1301,8 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
 
         // 1. Send WS delta immediately — never debounce real-time sync.
         if (source === 'user' && !isReplayModeRef.current && !isSyncDeltaEmpty(delta)) {
-          sendSocketMessage({ delta, type: 'canvas-delta' })
+          const cursor = lastPointerRef.current
+          sendSocketMessage(cursor ? { delta, type: 'canvas-delta', cursor } : { delta, type: 'canvas-delta' })
         }
 
         // 2. Keep the live shape map in sync using the delta (no full re-iteration).
@@ -1228,6 +1348,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
           isReplayModeRef.current = true
           setIsReplayMode(true)
           applyShapeList(editor, frame.shapes)
+          setReplayCursors(frame.cursors)
         }
 
         if (nextIndex >= replayFrames.length - 1) {
@@ -1258,6 +1379,10 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
     setPresenceCursors({})
     setReplayFrames([])
     setReplayIndex(0)
+    setReplayCursors({})
+    replayCursorMapRef.current = {}
+    replayShapeMapRef.current = new Map()
+    replayLiveSnapshotRef.current = null
     lastEventSeqRef.current = 0
   }, [roomInput, taskArray, taskDoc])
 
@@ -1424,6 +1549,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
       setIsReplayMode(true)
       setReplayIndex(frameIndex)
       applyShapeList(editor, frame.shapes)
+      setReplayCursors(frame.cursors)
       // Build a temporary snapshot for badges/stats from the historical frame
       const snapshot = buildCanvasSnapshot(editor, eventsRef.current)
       setStats(snapshot.stats)
@@ -1449,9 +1575,20 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
     isReplayModeRef.current = false
     setIsReplayMode(false)
     setIsReplayPlaying(false)
+    setReplayCursors({})
     setReplayIndex(Math.max(0, replayFrames.length - 1))
     refreshCanvasSnapshot(editor, false)
   }, [editor, refreshCanvasSnapshot, replayFrames.length])
+
+  const toggleReplayPlayback = useCallback(() => {
+    if (!replayFrames.length) return
+    if (isReplayPlaying) {
+      setIsReplayPlaying(false)
+      return
+    }
+    previewReplayFrame(0)
+    setIsReplayPlaying(true)
+  }, [isReplayPlaying, previewReplayFrame, replayFrames.length])
 
   const completeOnboarding = useCallback(() => {
     window.localStorage.setItem('ligma.onboardingComplete', 'true')
@@ -1462,6 +1599,8 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
     ? stats.selectedNodeIds.map((nodeId) => nodeId.replace('shape:', '')).join(', ')
     : 'No node selected'
   const activeUserList = Object.values(activeUsers)
+  const cursorDisplayMap = isReplayMode ? replayCursors : presenceCursors
+  const panelEdgeOffset = isPanelCollapsed ? 74 : 360
   const currentReplayFrame = replayFrames[replayIndex]
   const firstReplayFrame = replayFrames[0]
   const lastReplayFrame = replayFrames[replayFrames.length - 1]
@@ -1613,7 +1752,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
           />
 
           <svg className="presence-layer" aria-hidden="true">
-            {Object.values(presenceCursors).map((cursor) => {
+            {Object.values(cursorDisplayMap).map((cursor) => {
               if (!editor) return null
               const viewportPoint = editor.pageToViewport({ x: cursor.x, y: cursor.y })
               return (
@@ -1701,7 +1840,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
               )}
             </div>
             <div className="replay-controls">
-              <button type="button" title="Play replay" onClick={() => setIsReplayPlaying((isPlaying) => !isPlaying)}>
+              <button type="button" title="Play replay" onClick={toggleReplayPlayback}>
                 {isReplayPlaying ? <Pause size={15} aria-hidden="true" /> : <Play size={15} aria-hidden="true" />}
               </button>
               {[1, 2, 4].map((speed) => (
@@ -1763,6 +1902,17 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
             )}
           </AnimatePresence>
         </div>
+
+        <button
+          className="panel-edge-toggle"
+          type="button"
+          title={isPanelCollapsed ? 'Open panel' : 'Collapse panel'}
+          aria-label={isPanelCollapsed ? 'Open panel' : 'Collapse panel'}
+          onClick={() => setIsPanelCollapsed((isCollapsed) => !isCollapsed)}
+          style={{ right: panelEdgeOffset - 12 }}
+        >
+          {isPanelCollapsed ? <ChevronLeft size={16} aria-hidden="true" /> : <ChevronRight size={16} aria-hidden="true" />}
+        </button>
 
         <aside className={`right-panel ${isPanelCollapsed ? 'collapsed' : ''}`} aria-label="Execution panel">
           <section className="panel-section panel-toggle-section">

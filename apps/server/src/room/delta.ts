@@ -1,5 +1,5 @@
 import { v4 as uuid } from "uuid";
-import type { CanvasEvent, Role, SyncDelta, TLShape } from "./types.js";
+import type { CanvasEvent, CursorPayload, Role, SyncDelta, TLShape } from "./types.js";
 import {
   getShape,
   nextSeq,
@@ -74,6 +74,7 @@ function makeEvent(opts: {
   authorName: string;
   authorRole: Role;
   seq: number;
+  cursor?: CursorPayload;
 }): CanvasEvent {
   return {
     id: `evt-${uuid()}`,
@@ -85,6 +86,8 @@ function makeEvent(opts: {
     source: "user",
     authorName: opts.authorName,
     authorRole: opts.authorRole,
+    shape: opts.shape,
+    cursor: opts.cursor,
   };
 }
 
@@ -94,8 +97,9 @@ function makeEvent(opts: {
  */
 export function validateAndApplyDelta(
   roomId: string,
-  client: { name: string; role: Role },
+  client: { name: string; role: Role; sessionId: string; color: string },
   incoming: SyncDelta | undefined,
+  cursor?: { x: number; y: number },
 ): ApplyResult {
   const delta: SyncDelta = {
     added: incoming?.added ?? {},
@@ -105,6 +109,18 @@ export function validateAndApplyDelta(
   const acceptedDelta: SyncDelta = { added: {}, updated: {}, removed: {} };
   const events: CanvasEvent[] = [];
   const rejected: Array<{ id: string; reason: string }> = [];
+
+  const cursorPayload: CursorPayload | undefined =
+    cursor && Number.isFinite(cursor.x) && Number.isFinite(cursor.y)
+      ? {
+          sessionId: client.sessionId,
+          name: client.name,
+          role: client.role,
+          color: client.color,
+          x: cursor.x,
+          y: cursor.y,
+        }
+      : undefined;
 
   // CREATED — anyone with non-Viewer role can create. Viewer is read-only.
   for (const shape of Object.values(delta.added)) {
@@ -123,6 +139,7 @@ export function validateAndApplyDelta(
       authorName: client.name,
       authorRole: client.role,
       seq,
+      cursor: cursorPayload,
     });
     persistEvent(roomId, ev);
     persistShape(roomId, shape, seq);
@@ -152,6 +169,7 @@ export function validateAndApplyDelta(
       authorName: client.name,
       authorRole: client.role,
       seq,
+      cursor: cursorPayload,
     });
     persistEvent(roomId, ev);
     persistShape(roomId, next, seq);
@@ -174,6 +192,7 @@ export function validateAndApplyDelta(
       authorName: client.name,
       authorRole: client.role,
       seq,
+      cursor: cursorPayload,
     });
     persistEvent(roomId, ev);
     removeShape(roomId, shape.id);

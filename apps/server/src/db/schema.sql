@@ -18,7 +18,9 @@ CREATE TABLE IF NOT EXISTS events (
   operation      TEXT NOT NULL CHECK (operation IN ('created','updated','deleted')),
   source         TEXT NOT NULL CHECK (source IN ('user','remote')),
   author_name    TEXT NOT NULL,
-  author_role    TEXT NOT NULL CHECK (author_role IN ('Lead','Contributor','Viewer'))
+  author_role    TEXT NOT NULL CHECK (author_role IN ('Lead','Contributor','Viewer')),
+  shape_json     TEXT,
+  cursor_json    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_room_seq  ON events(room_id, seq);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_room_pk ON events(room_id, pk);

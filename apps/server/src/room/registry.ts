@@ -110,8 +110,8 @@ export function totalRooms(): number {
 // --- persistence ---
 
 const insertEvent = db.prepare(`
-  INSERT INTO events (id, room_id, seq, at, label, node_id, operation, source, author_name, author_role)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO events (id, room_id, seq, at, label, node_id, operation, source, author_name, author_role, shape_json, cursor_json)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const upsertShape = db.prepare(`
@@ -133,7 +133,8 @@ const allShapes = db.prepare(`
 `);
 
 const eventsSince = db.prepare(`
-  SELECT id, seq, at, label, node_id AS nodeId, operation, source, author_name AS authorName, author_role AS authorRole
+  SELECT id, seq, at, label, node_id AS nodeId, operation, source, author_name AS authorName, author_role AS authorRole,
+         shape_json AS shapeJson, cursor_json AS cursorJson
   FROM events WHERE room_id = ? AND seq > ? ORDER BY seq ASC
 `);
 
@@ -162,6 +163,8 @@ export function persistEvent(roomId: string, ev: CanvasEvent): void {
     ev.source,
     ev.authorName,
     ev.authorRole,
+    ev.shape ? JSON.stringify(ev.shape) : null,
+    ev.cursor ? JSON.stringify(ev.cursor) : null,
   );
 }
 
@@ -207,6 +210,8 @@ export function getEventsSince(roomId: string, sinceSeq: number): CanvasEvent[] 
     source: "user" | "remote";
     authorName: string;
     authorRole: Role;
+    shapeJson: string | null;
+    cursorJson: string | null;
   }>;
   return rows.map((r) => ({
     id: r.id,
@@ -218,7 +223,17 @@ export function getEventsSince(roomId: string, sinceSeq: number): CanvasEvent[] 
     source: r.source,
     authorName: r.authorName,
     authorRole: r.authorRole,
+    shape: r.shapeJson ? safeParseJson(r.shapeJson) : undefined,
+    cursor: r.cursorJson ? safeParseJson(r.cursorJson) : undefined,
   }));
+}
+
+function safeParseJson<T>(value: string): T | undefined {
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return undefined;
+  }
 }
 
 export function persistTaskDoc(roomId: string, doc: Y.Doc): void {

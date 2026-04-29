@@ -268,6 +268,7 @@ button {
   min-height: 0;
   display: grid;
   grid-template-columns: 78px minmax(0, 1fr) 360px;
+  position: relative;
 }
 
 .canvas-workbench.panel-collapsed {
@@ -446,8 +447,9 @@ button {
   gap: 12px;
   padding: 12px;
   border-left: 1px solid #cfd6c9;
-  overflow: auto;
+  overflow: hidden;
   box-sizing: border-box;
+  position: relative;
 }
 
 .right-panel.collapsed {
@@ -467,20 +469,70 @@ button {
 }
 
 .panel-toggle-section {
+  position: sticky;
+  top: 8px;
+  z-index: 6;
   overflow: hidden;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .panel-toggle {
   width: 100%;
-  min-height: 42px;
+  min-height: 58px;
+  padding: 8px 12px;
   justify-content: center;
   gap: 7px;
   border: 0;
   background: #ffffff;
   color: #32413b;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
+}
+
+.panel-edge-toggle {
+  position: absolute;
+  top: 16px;
+  z-index: 18;
+  width: 30px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #cfd6c9;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #32413b;
+  cursor: pointer;
+  box-shadow: 0 10px 20px rgba(24, 32, 31, 0.12);
+}
+
+.panel-edge-toggle:hover {
+  border-color: #738176;
+}
+
+/* Ensure the toggle remains obvious when the panel is collapsed or scrolled. */
+.panel-toggle-section {
+  box-shadow: 0 8px 20px rgba(24, 32, 31, 0.08);
+}
+
+/* Reposition the tldraw watermark to the left rail bottom. */
+.canvas-stage .tl-watermark_SEE-LICENSE {
+  position: fixed !important;
+  left: 9px !important;
+  bottom: 10px !important;
+  right: auto !important;
+  top: auto !important;
+  width: 60px !important;
+  height: 18px !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.canvas-stage .tl-watermark_SEE-LICENSE > button {
+  width: 60px !important;
+  height: 18px !important;
 }
 
 .compact-metrics {
@@ -515,6 +567,13 @@ button {
 .event-log,
 .presence-roster {
   padding: 14px;
+}
+
+.event-log {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
 .avatar-stack {
@@ -607,6 +666,13 @@ button {
 .event-list {
   display: grid;
   gap: 8px;
+}
+
+.event-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 6px;
 }
 
 .task-row,
