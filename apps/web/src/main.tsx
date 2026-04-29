@@ -62,34 +62,54 @@ function Root() {
   const [authed, setAuthed] = useState<boolean>(() => Boolean(readToken()));
   const [view, setView] = useState<View>(() => initialView());
   const [acceptError, setAcceptError] = useState<string | null>(null);
+  // Bumping this re-runs the invite lookup (used by the retry button so a
+  // transient network error doesn't leave the visitor stuck).
+  const [inviteAttempt, setInviteAttempt] = useState(0);
 
-  // initialView dispatches a custom event once it has resolved invite metadata;
-  // capture it so we can route Viewer invites straight in as guests, and show
-  // the room name on the Login screen for Contributor invites.
+  // Resolve invite metadata. We do this in an effect (not in the useState
+  // initializer) so a fetch failure can be surfaced via state instead of
+  // silently swallowed, and so retry works without remounting the page.
   useEffect(() => {
-    function onInviteInfo(e: Event) {
-      const detail = (e as CustomEvent<InviteInfo>).detail;
-      setView((prev) => {
-        if (prev.kind !== "invite-pending") return prev;
-        return { ...prev, info: detail };
+    if (view.kind !== "invite-pending") return;
+    if (view.info) return;
+    let cancelled = false;
+    readInvite(view.token)
+      .then((info) => {
+        if (cancelled) return;
+        setView((prev) =>
+          prev.kind === "invite-pending" && prev.token === view.token
+            ? { ...prev, info, error: null }
+            : prev,
+        );
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : String(err);
+        setView((prev) =>
+          prev.kind === "invite-pending" && prev.token === view.token
+            ? { ...prev, error: message }
+            : prev,
+        );
       });
-    }
-    window.addEventListener("ligma-invite-info", onInviteInfo as EventListener);
-    return () => window.removeEventListener("ligma-invite-info", onInviteInfo as EventListener);
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+    // inviteAttempt is read so the retry button can re-trigger the fetch.
+  }, [view, inviteAttempt]);
 
   // Anonymous Viewer fast-path: if the invite is read-only, drop the visitor
-  // straight into the room as a guest — no signup required.
+  // straight into the room as a guest — no signup required. Also persist the
+  // room_id into the URL (and clear ?invite=) so a reload lands them in the
+  // same room instead of bouncing through the invite resolver again.
   useEffect(() => {
     if (authed) return;
     if (view.kind !== "invite-pending") return;
     if (!view.info) return;
     if (view.info.role !== "Viewer") return;
-    setView({
-      kind: "room",
-      room_id: view.info.room_id,
-      guestInvite: view.token,
-    });
+    const room_id = view.info.room_id;
+    const token = view.token;
+    setRoomInUrl(room_id);
+    setView({ kind: "room", room_id, guestInvite: token });
   }, [authed, view]);
 
   // After auth state changes, re-derive view (so post-login we honor ?invite= or ?room=).
@@ -150,7 +170,38 @@ function Root() {
   }
 
   if (!authed) {
-    // If they're hitting an invite link unauthenticated, show login with a hint.
+    // Invite-pending without info yet: show a loader (or an error with retry)
+    // instead of the sign-in screen. An anonymous Viewer should never see the
+    // Login form — they'd have no way to know the link was a Viewer invite,
+    // and a Viewer fast-path is queued as soon as info resolves.
+    if (view.kind === "invite-pending" && !view.info) {
+      if (view.error) {
+        return (
+          <InviteErrorScreen
+            message={view.error}
+            onRetry={() => {
+              setView((prev) =>
+                prev.kind === "invite-pending"
+                  ? { ...prev, error: null }
+                  : prev,
+              );
+              setInviteAttempt((n) => n + 1);
+            }}
+            onSignIn={() => {
+              // Let the user fall back to the sign-in screen if the invite
+              // really is dead (revoked/expired). They can sign in and use
+              // the home page instead of being stuck.
+              setRoomInUrl(null);
+              setView({ kind: "home" });
+            }}
+          />
+        );
+      }
+      return <LoadingScreen label="Joining whiteboard…" />;
+    }
+
+    // Contributor invite (info loaded): show Login pre-tabbed to Sign up,
+    // with the room name as a hint.
     let inviteRoomName: string | undefined;
     if (view.kind === "invite-pending" && view.info) {
       inviteRoomName = view.info.room_name;
@@ -197,18 +248,90 @@ function Root() {
   }
 
   // invite-pending while we wait for the accept fetch
+  return <LoadingScreen label="Joining whiteboard…" />;
+}
+
+const SCREEN_BASE_STYLE = {
+  minHeight: "100vh",
+  display: "grid",
+  placeItems: "center",
+  background: "#f8fafc",
+  color: "#475569",
+  fontFamily: "ui-sans-serif, system-ui, -apple-system, Inter, sans-serif",
+} as const;
+
+function LoadingScreen({ label }: { label: string }) {
+  return <div style={SCREEN_BASE_STYLE}>{label}</div>;
+}
+
+function InviteErrorScreen({
+  message,
+  onRetry,
+  onSignIn,
+}: {
+  message: string;
+  onRetry: () => void;
+  onSignIn: () => void;
+}) {
+  // Surface the underlying server error so a revoked/expired invite is
+  // distinguishable from a transient network failure. Both retry and
+  // sign-in are offered so the visitor is never stranded.
+  const expiredOrRevoked = /expired|revoked|not_found/i.test(message);
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        background: "#f8fafc",
-        color: "#475569",
-        fontFamily: "ui-sans-serif, system-ui, -apple-system, Inter, sans-serif",
-      }}
-    >
-      Joining whiteboard…
+    <div style={SCREEN_BASE_STYLE}>
+      <div
+        style={{
+          maxWidth: 420,
+          padding: 28,
+          background: "#fff",
+          borderRadius: 12,
+          boxShadow: "0 10px 30px rgba(15, 23, 42, 0.08)",
+          textAlign: "center",
+        }}
+      >
+        <h2 style={{ margin: "0 0 8px", color: "#0f172a", fontSize: 18 }}>
+          We couldn't open this invite
+        </h2>
+        <p style={{ margin: "0 0 20px", fontSize: 14 }}>
+          {expiredOrRevoked
+            ? "This invite link is no longer valid. Ask the room lead for a fresh link."
+            : `Something went wrong while loading the invite${message ? ` (${message})` : ""}. Check your connection and try again.`}
+        </p>
+        <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+          {!expiredOrRevoked && (
+            <button
+              type="button"
+              onClick={onRetry}
+              style={{
+                padding: "8px 14px",
+                borderRadius: 8,
+                border: "1px solid #0ea5e9",
+                background: "#0ea5e9",
+                color: "#fff",
+                cursor: "pointer",
+                fontWeight: 600,
+              }}
+            >
+              Try again
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onSignIn}
+            style={{
+              padding: "8px 14px",
+              borderRadius: 8,
+              border: "1px solid #cbd5f5",
+              background: "#fff",
+              color: "#0f172a",
+              cursor: "pointer",
+              fontWeight: 600,
+            }}
+          >
+            Continue to sign in
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -217,17 +340,7 @@ function initialView(): View {
   const params = getSearch();
   const invite = params.get("invite");
   if (invite) {
-    // Kick off a non-auth invite preview so we can show the room name on Login.
-    const v: View = { kind: "invite-pending", token: invite, info: null, error: null };
-    readInvite(invite)
-      .then((info) => {
-        // we update the state via a custom event because we're outside the component
-        window.dispatchEvent(new CustomEvent("ligma-invite-info", { detail: info }));
-      })
-      .catch(() => {
-        /* ignore — server will tell us on accept */
-      });
-    return v;
+    return { kind: "invite-pending", token: invite, info: null, error: null };
   }
   const room = params.get("room");
   if (room) return { kind: "room", room_id: room };

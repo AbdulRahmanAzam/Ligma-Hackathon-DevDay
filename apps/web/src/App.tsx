@@ -66,6 +66,7 @@ import 'tldraw/tldraw.css'
 import './App.css'
 import { InviteModal } from './InviteModal'
 import { MCPPanel } from './MCPPanel'
+import { AIBoard, AIBoardButton } from './AIBoard'
 import { checkMCPHealth } from './mcp-integration'
 import { resolveApiUrl } from './auth-api'
 import {
@@ -700,6 +701,7 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
   }, [roomId])
   const [editor, setEditor] = useState<Editor | null>(null)
   const [mcpConfigured, setMcpConfigured] = useState(false)
+  const [showAIBoard, setShowAIBoard] = useState(false)
   useEffect(() => {
     let cancelled = false
     checkMCPHealth().then((res) => {
@@ -1908,6 +1910,11 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
                 <span>Invite</span>
               </button>
             )}
+            <AIBoardButton
+              isLead={userRole === 'Lead'}
+              configured={mcpConfigured}
+              onClick={() => setShowAIBoard(true)}
+            />
           </div>
         </div>
 
@@ -2298,6 +2305,12 @@ function App({ onBackToHome, roomError, clearRoomError, guestInviteToken }: AppP
       {showInvite && (
         <InviteModal room_id={roomId} onClose={() => setShowInvite(false)} />
       )}
+      <AIBoard
+        editor={editor}
+        roomId={roomId}
+        open={showAIBoard}
+        onClose={() => setShowAIBoard(false)}
+      />
       {showSummaryModal && summaryData && (
         <div className="summary-modal-overlay" onClick={() => setShowSummaryModal(false)}>
           <div className="summary-modal" onClick={(e) => e.stopPropagation()}>
