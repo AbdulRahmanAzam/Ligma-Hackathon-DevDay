@@ -1,5 +1,10 @@
 # LIGMA — Real-time Ideation → Execution
 
+
+ERD Diagram:  [ERD.pdf](https://github.com/user-attachments/files/27209031/erd.updated.pdf)
+
+
+
 DevDay '26 Hackathon submission. A live whiteboard that turns brainstorms
 into tracked tasks, with role-aware permissions and shareable invite links.
 
